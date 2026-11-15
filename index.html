@@ -435,16 +435,16 @@ document.getElementById("runBacktest").addEventListener("click",async()=>{
    const pred=historicalScore(closed,i);if(!pred)continue;
    const future=closed.slice(i+1,i+4),target=future[future.length-1],change=(Number(target[4])/pred.basePrice-1)*100;
    const high=Math.max(...future.map(k=>Number(k[2]))),low=Math.min(...future.map(k=>Number(k[3])));
-   const mfe=(high/pred.basePrice-1)*100,mae=(low/pred.basePrice-1)*100;
+   const mfe=pred.direction==="看跌"?(pred.basePrice/low-1)*100:(high/pred.basePrice-1)*100,mae=pred.direction==="看跌"?(pred.basePrice/high-1)*100:(low/pred.basePrice-1)*100;
    samples.push({...pred,targetClose:Number(target[4]),targetCloseTime:Number(target[6]),changePct:change,mfePct:mfe,maePct:mae,correct:pred.direction==="中性"?null:(pred.direction==="看涨"?change>0:change<0),netChangePct:pred.direction==="中性"?null:(pred.direction==="看涨"?change-costBps/100: -change-costBps/100)});
   }
   const dirs=samples.filter(x=>x.direction!=="中性"),neutral=samples.filter(x=>x.direction==="中性"),wins=dirs.filter(x=>x.correct).length,neutralHit=neutral.filter(x=>Math.abs(x.changePct)<0.1).length;
   const avg=(a,f)=>a.length?a.reduce((z,x)=>z+f(x),0)/a.length:null,fmtp=x=>x===null?"—":(x>=0?"+":"")+x.toFixed(3)+"%";
-  const vals=[samples.length,dirs.length,(dirs.length?wins/dirs.length*100:null),neutral.length,(neutral.length?neutralHit/neutral.length*100:null),avg(samples,x=>x.changePct),avg(dirs,x=>x.netChangePct),avg(samples,x=>x.mfePct),avg(samples,x=>x.maePct)];
+  const vals=[samples.length,dirs.length,(dirs.length?wins/dirs.length*100:null),neutral.length,(neutral.length?neutralHit/neutral.length*100:null),avg(samples,x=>x.changePct),avg(dirs,x=>x.netChangePct),avg(dirs,x=>x.mfePct),avg(dirs,x=>x.maePct)];
   const tr=document.createElement("tr");vals.forEach((v,i)=>{const td=document.createElement("td");td.textContent=i===2||i===4?(v===null?"—":v.toFixed(2)+"%"):i===0||i===1||i===3?String(v):fmtp(v);tr.appendChild(td)});body.appendChild(tr);
   const winsPct=dirs.length?wins/dirs.length*100:null,netAvg=avg(dirs,x=>x.netChangePct);
-  status.textContent="完成："+symbol+" "+period+"；已收盘K线 "+closed.length+" 根；有效滚动样本 "+samples.length+" 条；方向样本 "+dirs.length+" 条；成本假设 "+costBps+" bps（往返）。方向命中率仅统计涨跌方向，不代表盈利率。";
-  raw.textContent=JSON.stringify({symbol,period,readAt:new Date().toISOString(),source:"Binance USD-M /fapi/v1/klines",barsRequested:500,closedBars:closed.length,costBps,summary:{sampleCount:samples.length,directionalCount:dirs.length,wins,losses:dirs.length-wins,directionalHitRatePct:winsPct,neutralCount:neutral.length,neutralInBand:neutralHit,neutralInBandPct:neutral.length?neutralHit/neutral.length*100:null,avgChangePct:avg(samples,x=>x.changePct),avgNetDirectionalPct:netAvg,avgMfePct:avg(samples,x=>x.mfePct),avgMaePct:avg(samples,x=>x.maePct)},samples},null,2);
+  status.textContent="完成："+symbol+" "+period+"；已收盘K线 "+closed.length+" 根；有效滚动样本 "+samples.length+" 条；方向样本 "+dirs.length+" 条；成本假设 "+costBps+" bps（往返）。方向命中率仅统计涨跌方向，不代表盈利率；相邻滚动样本的观察区间重叠，样本并非独立。";
+  raw.textContent=JSON.stringify({symbol,period,readAt:new Date().toISOString(),source:"Binance USD-M /fapi/v1/klines",barsRequested:500,closedBars:closed.length,costBps,summary:{sampleCount:samples.length,directionalCount:dirs.length,wins,losses:dirs.length-wins,directionalHitRatePct:winsPct,neutralCount:neutral.length,neutralInBand:neutralHit,neutralInBandPct:neutral.length?neutralHit/neutral.length*100:null,avgChangePct:avg(samples,x=>x.changePct),avgNetDirectionalPct:netAvg,avgMfePct:avg(dirs,x=>x.mfePct),avgMaePct:avg(dirs,x=>x.maePct)},samples},null,2);
  }catch(e){status.textContent="回测失败："+e.message;raw.textContent=String(e)}
  finally{btn.disabled=false}
 });
