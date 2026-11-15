@@ -268,11 +268,8 @@ async function getScanUniverse(){
   exchangeInfo=info;symbols=new Set(info.symbols.filter(s=>s.status==="TRADING"&&s.contractType==="PERPETUAL"&&s.quoteAsset==="USDT").map(s=>s.symbol));
   allTickers=tickers.filter(t=>symbols.has(t.symbol)).sort((a,b)=>Number(b.quoteVolume)-Number(a.quoteVolume));render();
  }
- // 保留低价偏好和流动性底线，最多60个深度扫描，避免522合约同时打接口。
- return allTickers.filter(t=>Number(t.lastPrice)<=0.5&&Number(t.quoteVolume)>=5000000).slice(0,60);
-}
-async function poolMap(items,limit,fn){
- let next=0;const workers=Array.from({length,},()=>{}); 
+ // 全量返回符合价格与流动性条件的USDT永续合约；后续分批限速分析。
+ return allTickers.filter(t=>Number(t.lastPrice)<=0.5&&Number(t.quoteVolume)>=5000000);
 }
 async function scanCandidates(kind){
  const status=document.getElementById(kind==="latent"?"latentStatus":"risingStatus"),body=document.getElementById(kind==="latent"?"latentRows":"risingRows"),btn=document.getElementById(kind==="latent"?"scanLatent":"scanRising");
@@ -281,8 +278,11 @@ async function scanCandidates(kind){
   const universe=await getScanUniverse();
   if(!universe.length)throw new Error("没有符合价格≤0.50 USDT且24小时成交额≥500万美元的合约。");
   status.textContent="预筛得到 "+universe.length+" 个候选，正在限速分析5m和4h K线…";
-  const results=[];let cursor=0,finished=0;
-  const worker=async()=>{while(cursor<universe.length){const item=universe[cursor++];try{
+  const batchSize=8;
+  status.textContent="预筛得到 "+universe.length+" 个候选；每批最多8个、最多4个并发，逐批读取5m和4h K线…";
+  const results=[];let finished=0;
+  const analyzeOne=async(item)=>{
+   try{
     const [b5,b4]=await Promise.all([
      getJSON(API+"/fapi/v1/klines?symbol="+encodeURIComponent(item.symbol)+"&interval=5m&limit=60"),
      getJSON(API+"/fapi/v1/klines?symbol="+encodeURIComponent(item.symbol)+"&interval=4h&limit=60")
@@ -290,7 +290,7 @@ async function scanCandidates(kind){
     const now=Date.now(),c5=b5.filter(k=>Number(k[6])<now),c4=b4.filter(k=>Number(k[6])<now);
     if(c5.length<25||c4.length<50)throw new Error("完整K线不足");
     const cl5=c5.map(k=>Number(k[4])),cl4=c4.map(k=>Number(k[4]));
-    const last5=c5[c5.length-1],last4=c4[c4.length-1],p5=c5[c5.length-2];
+    const last5=c5[c5.length-1],last4=c4[c4.length-1];
     const e20_4=ema(cl4,20),e50_4=ema(cl4,50),e20_5=ema(cl5,20);
     const mom5=(Number(last5[4])/Number(c5[c5.length-4][4])-1)*100;
     const qv5=c5.map(k=>Number(k[7])),avgq=qv5.slice(-21,-1).reduce((s,x)=>s+x,0)/20,vr=avgq?qv5[qv5.length-1]/avgq:NaN;
@@ -305,9 +305,14 @@ async function scanCandidates(kind){
     let riseScore=0;if(trend4)riseScore+=2;if(Number(last5[4])>e20_5)riseScore++;if(mom5>0.15)riseScore+=2;if(vr>=1.2&&Number(last5[4])>Number(last5[1]))riseScore+=2;if(Number(item.priceChangePercent)>-5&&Number(item.priceChangePercent)<12)riseScore++;if(position>0.75&&Number(last5[4])>rangeHigh)riseScore++;
     results.push({symbol:item.symbol,price:Number(item.lastPrice),qv:Number(item.quoteVolume),change24:Number(item.priceChangePercent),trend4:trend4?"4h偏多":"4h未转强",compression,risingLows,position,mom5,vr,latentScore,riseScore,close5:Number(last5[4]),rangeHigh,rangeLow,avgRange});
    }catch(e){results.push({symbol:item.symbol,error:e.message})}
-   finished++;status.textContent="已分析 "+finished+"/"+universe.length+"；有效 "+results.filter(x=>!x.error).length+" 个…";
-  }};
-  await Promise.all(Array.from({length:4},()=>worker()));
+   finished++;
+   status.textContent="已分析 "+finished+"/"+universe.length+"；有效 "+results.filter(x=>!x.error).length+" 个；失败 "+results.filter(x=>x.error).length+" 个…";
+  };
+  for(let start=0;start<universe.length;start+=batchSize){
+   const batch=universe.slice(start,start+batchSize);let next=0;
+   const workers=Array.from({length:Math.min(4,batch.length)},async()=>{while(next<batch.length){const item=batch[next++];await analyzeOne(item)}});
+   await Promise.all(workers);
+  }
   const valid=results.filter(x=>!x.error);
   const fmtN=n=>Number(n).toLocaleString("en-US",{maximumFractionDigits:8});
   if(kind==="latent"){
@@ -318,7 +323,7 @@ async function scanCandidates(kind){
   }else{
    const chosen=valid.filter(x=>x.riseScore>=5&&x.trend4==="4h偏多").sort((a,b)=>b.riseScore-a.riseScore||b.mom5-a.mom5);
    if(!chosen.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=8;td.textContent="本轮没有达到偏多评分门槛的标的；不输出低质量候选。";tr.appendChild(td);body.appendChild(tr)}
-   chosen.slice(0,30).forEach(x=>{const tr=document.createElement("tr");[x.symbol,fmtN(x.price),(x.change24>=0?"+":"")+x.change24.toFixed(2)+"%",x.trend4,(x.mom5>=0?"+":"")+x.mom5.toFixed(3)+"%",Number.isFinite(x.vr)?x.vr.toFixed(2)+"倍":"—",x.riseScore+"/9","偏多观察，非确定预测"].forEach(v=>{const td=document.createElement("td");td.textContent=v;tr.appendChild(td)});body.appendChild(tr)});
+   chosen.forEach(x=>{const tr=document.createElement("tr");[x.symbol,fmtN(x.price),(x.change24>=0?"+":"")+x.change24.toFixed(2)+"%",x.trend4,(x.mom5>=0?"+":"")+x.mom5.toFixed(3)+"%",Number.isFinite(x.vr)?x.vr.toFixed(2)+"倍":"—",x.riseScore+"/9","偏多观察，非确定预测"].forEach(v=>{const td=document.createElement("td");td.textContent=v;tr.appendChild(td)});body.appendChild(tr)});
    status.textContent="完成：预筛 "+universe.length+" 个，K线有效 "+valid.length+" 个，上涨观察候选 "+chosen.length+" 个。数据时间 "+new Date().toLocaleString()+"。";
   }
   const failed=results.filter(x=>x.error).length;if(failed)status.textContent+=" 失败/缺失 "+failed+" 个，未将缺失数据视为零。";
