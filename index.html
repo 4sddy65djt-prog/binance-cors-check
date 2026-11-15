@@ -302,7 +302,6 @@ function watchAdd(sym){
 function handleAddWatch(){const st=document.getElementById("watchStatus"),input=document.getElementById("watchInput");try{const msg=watchAdd(input.value);st.textContent=msg;if(msg.startsWith("已添加"))input.value="";}catch(e){st.textContent="添加失败："+(e&&e.message?e.message:String(e));}}
 document.getElementById("addWatch").type="button";
 document.getElementById("addWatch").onclick=handleAddWatch;
-document.getElementById("addWatch").addEventListener("click",handleAddWatch);
 document.getElementById("addCurrentWatch").type="button";
 document.getElementById("addCurrentWatch").onclick=()=>{const st=document.getElementById("watchStatus");try{st.textContent=watchAdd(document.getElementById("symbol").value)}catch(e){st.textContent="添加失败："+(e&&e.message?e.message:String(e))}};
 document.getElementById("watchInput").addEventListener("keydown",e=>{if(e.key==="Enter")document.getElementById("addWatch").click()});
