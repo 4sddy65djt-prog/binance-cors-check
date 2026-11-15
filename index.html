@@ -3,49 +3,84 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Binance API 连通性测试</title>
+<title>Binance USDT 永续实时行情面板</title>
 <style>
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;padding:20px;background:#f5f6f8;color:#18202a}
-main{max-width:760px;margin:auto}h1{font-size:23px}button{background:#f0b90b;border:0;border-radius:9px;padding:12px 18px;font-size:16px;font-weight:600}
-.card{background:white;border-radius:12px;padding:14px;margin:14px 0;box-shadow:0 1px 5px #0001}
-.status{font-weight:700}.ok{color:#16834a}.bad{color:#c0392b}
-pre{white-space:pre-wrap;word-break:break-all;background:#101820;color:#d8e4ee;padding:12px;border-radius:8px;overflow:auto;font-size:12px}
-small{color:#647080}
+:root{color-scheme:light}*{box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;padding:16px;background:#f4f6f8;color:#17212b}main{max-width:980px;margin:auto}h1{font-size:22px}h2{font-size:18px;margin:4px 0 12px}.muted,small{color:#687586}.toolbar,.controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.card{background:#fff;border-radius:12px;padding:14px;margin:12px 0;box-shadow:0 1px 5px #0001}button,select,input{font:inherit;border:1px solid #ccd3dc;border-radius:8px;padding:10px;background:#fff;color:#17212b}button.primary{background:#f0b90b;border:0;font-weight:700}button:disabled{opacity:.5}input{min-width:0;flex:1}select{max-width:100%}.status{font-weight:700}.ok{color:#16834a}.bad{color:#c0392b}.tablewrap{overflow:auto;max-height:460px}table{width:100%;border-collapse:collapse;font-size:13px;white-space:nowrap}th,td{text-align:right;padding:9px 7px;border-bottom:1px solid #edf0f3}th:first-child,td:first-child{text-align:left}th{position:sticky;top:0;background:#f8fafb}.positive{color:#16834a}.negative{color:#c0392b}pre{white-space:pre-wrap;word-break:break-all;background:#101820;color:#d8e4ee;padding:12px;border-radius:8px;overflow:auto;font-size:12px;max-height:420px}.pill{display:inline-block;padding:3px 7px;border-radius:20px;background:#eef2f6;font-size:12px}
 </style>
 </head>
 <body><main>
-<h1>Binance 官方公开 API 连通性测试</h1>
-<p>无需 API Key，不会登录账户、读取资产或提交订单。</p>
-<button id="run">开始测试</button>
-<p id="summary">尚未测试</p>
-<div id="results"></div>
+<h1>Binance USDT 永续实时行情面板</h1>
+<p class="muted">仅使用 Binance 官方公开行情接口；无需 API Key。不会登录账户、读取资产或提交订单。</p>
+<div class="card">
+ <div class="toolbar"><button class="primary" id="load">加载 / 刷新全部合约</button><span id="loadStatus" class="status">尚未加载</span></div>
+ <p class="muted" id="updated">数据时间：—</p>
+ <p class="muted">列表范围：交易状态为 TRADING、合约类型为 PERPETUAL、计价资产为 USDT。成交额按 24 小时 quoteVolume 排序。</p>
+</div>
+<div class="card">
+ <h2>USDT 永续合约列表</h2>
+ <div class="controls"><input id="search" placeholder="搜索交易对，例如 BTC、DOGS"><span class="pill" id="count">0 个合约</span></div>
+ <div class="tablewrap"><table><thead><tr><th>交易对</th><th>最新价格</th><th>24h 涨跌</th><th>24h 成交额</th></tr></thead><tbody id="tickerRows"><tr><td colspan="4">请先点击“加载 / 刷新全部合约”</td></tr></tbody></table></div>
+</div>
+<div class="card">
+ <h2>指定合约 K 线数据</h2>
+ <div class="controls">
+  <input id="symbol" value="BTCUSDT" aria-label="交易对">
+  <select id="interval"><option value="5m">5 分钟</option><option value="15m">15 分钟</option><option value="1h">1 小时</option><option value="4h">4 小时</option></select>
+  <button class="primary" id="getKlines">读取最近 30 根 K 线</button>
+ </div>
+ <p id="klineStatus" class="muted">尚未读取</p>
+ <pre id="klineData">K线数组将在这里显示。</pre>
+ <small>数组字段顺序：开盘时间、开盘价、最高价、最低价、收盘价、成交量、收盘时间、成交额、成交笔数、主动买入成交量、主动买入成交额、忽略字段。</small>
+</div>
+<div class="card">
+ <h2>接口说明</h2>
+ <p class="muted">本版读取 exchangeInfo、ticker/24hr 和 klines。数据为接口返回时的快照，不代表逐笔实时推送；刷新按钮会重新请求。若接口受网络、地区或 CORS 限制，会显示错误，不会伪造数据。</p>
+ <details><summary>查看原始交易规则数据</summary><pre id="exchangeData">尚未加载</pre></details>
+</div>
 <script>
-const tests=[
-{name:"现货 Ping",url:"https://data-api.binance.vision/api/v3/ping"},
-{name:"合约服务器时间",url:"https://fapi.binance.com/fapi/v1/time"},
-{name:"BTCUSDT 最新价格",url:"https://fapi.binance.com/fapi/v1/ticker/price?symbol=BTCUSDT"},
-{name:"BTCUSDT 最近 3 根 5 分钟 K 线（数组）",url:"https://fapi.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=5m&limit=3"},
-{name:"合约交易规则",url:"https://fapi.binance.com/fapi/v1/exchangeInfo"}
-];
-const run=document.getElementById("run"),results=document.getElementById("results"),summary=document.getElementById("summary");
-run.addEventListener("click",async()=>{
- run.disabled=true;run.textContent="测试中…";results.innerHTML="";let ok=0;
- for(const t of tests){
-  const card=document.createElement("section");card.className="card";
-  const h=document.createElement("h3");h.textContent=t.name;card.appendChild(h);
-  const s=document.createElement("div");s.className="status";s.textContent="请求中…";card.appendChild(s);
-  const pre=document.createElement("pre");pre.textContent="";card.appendChild(pre);results.appendChild(card);
-  try{
-   const res=await fetch(t.url,{cache:"no-store"});
-   const body=await res.text();let parsed;try{parsed=JSON.parse(body)}catch{parsed=body}
-   s.textContent="HTTP "+res.status+" "+(res.ok?"成功":"失败");s.className="status "+(res.ok?"ok":"bad");
-   pre.textContent=typeof parsed==="string"?parsed:JSON.stringify(parsed,null,2);
-   if(res.ok)ok++;
-  }catch(e){
-   s.textContent="请求失败（可能是网络或 CORS 限制）";s.className="status bad";pre.textContent=String(e);
-  }
+const API="https://fapi.binance.com";
+const loadBtn=document.getElementById("load"),loadStatus=document.getElementById("loadStatus"),updated=document.getElementById("updated");
+const rows=document.getElementById("tickerRows"),search=document.getElementById("search"),count=document.getElementById("count");
+let allTickers=[],symbols=new Set(),exchangeInfo=null;
+async function getJSON(url){const r=await fetch(url,{cache:"no-store"});const txt=await r.text();let data;try{data=JSON.parse(txt)}catch{throw new Error("HTTP "+r.status+"：返回内容不是 JSON："+txt.slice(0,180))}if(!r.ok)throw new Error("HTTP "+r.status+"："+JSON.stringify(data));return data}
+function fmt(n){const x=Number(n);if(!Number.isFinite(x))return "—";return x.toLocaleString("en-US",{maximumFractionDigits:8})}
+function render(){
+ const q=search.value.trim().toUpperCase();
+ const filtered=allTickers.filter(x=>symbols.has(x.symbol)&&(!q||x.symbol.includes(q)));
+ count.textContent=filtered.length+" 个合约";
+ rows.replaceChildren();
+ if(!filtered.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=4;td.textContent="没有匹配结果";tr.appendChild(td);rows.appendChild(tr);return}
+ const frag=document.createDocumentFragment();
+ for(const x of filtered){
+  const tr=document.createElement("tr");
+  const vals=[x.symbol,fmt(x.lastPrice),Number(x.priceChangePercent).toFixed(2)+"%",fmt(x.quoteVolume)];
+  vals.forEach((v,i)=>{const td=document.createElement("td");td.textContent=v;if(i===2)td.className=Number(x.priceChangePercent)>=0?"positive":"negative";if(i===0){td.style.fontWeight="700";td.style.textAlign="left";td.style.cursor="pointer";td.title="点击将交易对填入 K 线查询";td.addEventListener("click",()=>{document.getElementById("symbol").value=x.symbol;document.getElementById("getKlines").click()})}tr.appendChild(td)});
+  frag.appendChild(tr);
  }
- summary.textContent="测试完成："+ok+"/"+tests.length+" 个接口成功。结果时间："+new Date().toLocaleString();
- run.disabled=false;run.textContent="重新测试";
+ rows.appendChild(frag);
+}
+loadBtn.addEventListener("click",async()=>{
+ loadBtn.disabled=true;loadStatus.className="status";loadStatus.textContent="正在读取官方接口…";
+ try{
+  const [info,tickers]=await Promise.all([getJSON(API+"/fapi/v1/exchangeInfo"),getJSON(API+"/fapi/v1/ticker/24hr")]);
+  exchangeInfo=info;
+  symbols=new Set(info.symbols.filter(s=>s.status==="TRADING"&&s.contractType==="PERPETUAL"&&s.quoteAsset==="USDT").map(s=>s.symbol));
+  allTickers=tickers.filter(t=>symbols.has(t.symbol)).sort((a,b)=>Number(b.quoteVolume)-Number(a.quoteVolume));
+  render();document.getElementById("exchangeData").textContent=JSON.stringify({timezone:info.timezone,serverTime:info.serverTime,totalUSDTPerpetuals:symbols.size,example:info.symbols.find(s=>s.symbol==="BTCUSDT")},null,2);
+  loadStatus.className="status ok";loadStatus.textContent="加载成功："+symbols.size+" 个可交易 USDT 永续合约";
+  updated.textContent="数据读取时间："+new Date().toLocaleString()+"（本地时间）";
+ }catch(e){loadStatus.className="status bad";loadStatus.textContent="加载失败："+e.message}
+ finally{loadBtn.disabled=false}
 });
-</script></main></body></html>
+search.addEventListener("input",render);
+document.getElementById("getKlines").addEventListener("click",async()=>{
+ const symbol=document.getElementById("symbol").value.trim().toUpperCase(),interval=document.getElementById("interval").value;
+ const status=document.getElementById("klineStatus"),out=document.getElementById("klineData"),btn=document.getElementById("getKlines");
+ if(!/^[A-Z0-9]+$/.test(symbol)){status.textContent="交易对格式不正确";return}
+ btn.disabled=true;status.textContent="请求中…";out.textContent="";
+ try{const data=await getJSON(API+"/fapi/v1/klines?symbol="+encodeURIComponent(symbol)+"&interval="+encodeURIComponent(interval)+"&limit=30");status.textContent="成功：返回 "+data.length+" 根 "+interval+" K线；读取时间 "+new Date().toLocaleString();out.textContent=JSON.stringify(data,null,2)}
+ catch(e){status.textContent="读取失败："+e.message;out.textContent=String(e)}
+ finally{btn.disabled=false}
+});
+</script>
+</main></body></html>
