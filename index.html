@@ -28,7 +28,7 @@
 </div>
 <div class="card" id="scannerCard">
  <h2>全市场潜伏币扫描</h2>
- <p class="muted">默认筛选：价格不高于 0.50 USDT、24小时成交额不低于 500万美元；先按成交额预筛，再分析4小时结构与5分钟压缩。扫描全部符合预筛条件的合约；采用分批、限并发方式读取5分钟和4小时K线，并报告成功与失败数量。</p>
+ <p class="muted">默认筛选：价格不高于 0.50 USDT、24小时成交额不低于 300万美元；先按成交额预筛，再分析4小时结构与5分钟压缩。扫描全部符合预筛条件的合约；采用分批、限并发方式读取5分钟和4小时K线，并报告成功与失败数量。</p>
  <div class="toolbar"><button class="primary" id="scanLatent">开始扫描潜伏币</button><span id="latentStatus" class="muted">尚未扫描</span></div>
  <div class="tablewrap"><table><thead><tr><th>交易对</th><th>价格</th><th>24h成交额</th><th>4h趋势</th><th>5m结构</th><th>潜伏评分</th><th>标签</th></tr></thead><tbody id="latentRows"><tr><td colspan="7">等待扫描</td></tr></tbody></table></div>
 </div>
@@ -438,14 +438,14 @@ async function getScanUniverse(){
   allTickers=tickers.filter(t=>symbols.has(t.symbol)).sort((a,b)=>Number(b.quoteVolume)-Number(a.quoteVolume));render();
  }
  // 全量返回符合价格与流动性条件的USDT永续合约；后续分批限速分析。
- return allTickers.filter(t=>Number(t.lastPrice)<=0.5&&Number(t.quoteVolume)>=5000000);
+ return allTickers.filter(t=>Number(t.lastPrice)<=0.5&&Number(t.quoteVolume)>=3000000);
 }
 async function scanCandidates(kind){
  const status=document.getElementById(kind==="latent"?"latentStatus":"risingStatus"),body=document.getElementById(kind==="latent"?"latentRows":"risingRows"),btn=document.getElementById(kind==="latent"?"scanLatent":"scanRising");
  btn.disabled=true;body.replaceChildren();status.textContent="正在读取市场候选…";
  try{
   const universe=await getScanUniverse();
-  if(!universe.length)throw new Error("没有符合价格≤0.50 USDT且24小时成交额≥500万美元的合约。");
+  if(!universe.length)throw new Error("没有符合价格≤0.50 USDT且24小时成交额≥300万美元的合约。");
   status.textContent="预筛得到 "+universe.length+" 个候选，正在限速分析5m和4h K线…";
   const batchSize=8;
   status.textContent="预筛得到 "+universe.length+" 个候选；每批最多8个、最多4个并发，逐批读取5m和4h K线…";
