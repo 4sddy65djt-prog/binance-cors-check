@@ -51,7 +51,7 @@
  <div class="tablewrap"><table><thead><tr><th>周期</th><th>方向</th><th>评分</th><th>基准价</th><th>目标时间</th><th>状态</th></tr></thead><tbody id="forecastRows"><tr><td colspan="6">暂无预测记录</td></tr></tbody></table></div>
  <h3>历史验证统计</h3><div id="forecastStats" class="muted">尚无已验证样本。</div>
  <details><summary>查看预测记录（本机保存）</summary><pre id="forecastRaw">[]</pre></details>
- <p class="muted">本版规则透明但尚未证明有效：EMA 趋势、最近收盘方向、短期动量与成交量共同计分。每个周期以最近一根完整 K 线为基准，观察未来 3 根该周期 K 线；中性预测不计入涨跌方向命中率。记录保存在当前 Safari 本地，清除网站数据可能丢失。</p>
+ <p class="muted">本版规则透明但尚未证明有效：EMA 趋势、最近收盘方向、短期动量与成交量共同计分。每个周期以最近一根完整 K 线为基准，观察未来 3 根该周期 K 线；方向命中率只统计看涨/看跌；中性单独统计实际波动是否落在±0.1%以内。分周期统计包括样本量、命中率与平均涨跌幅。平均涨跌幅不扣除手续费和滑点，不能直接视为策略收益。记录保存在当前 Safari 本地，清除网站数据可能丢失。</p>
 </div>
 
 <div class="card">
@@ -154,10 +154,37 @@ function ema(values,period){if(values.length<period)return NaN;const k=2/(period
 function renderForecasts(){
  const a=readForecasts(),body=document.getElementById("forecastRows"),raw=document.getElementById("forecastRaw"),stats=document.getElementById("forecastStats");
  body.replaceChildren();raw.textContent=JSON.stringify(a.slice(-80),null,2);
- const pending=a.filter(x=>!x.validatedAt),done=a.filter(x=>x.validatedAt),directional=done.filter(x=>x.direction!=="中性");
+ const pending=a.filter(x=>!x.validatedAt),done=a.filter(x=>x.validatedAt),directional=done.filter(x=>x.direction!=="中性"),neutral=done.filter(x=>x.direction==="中性");
  const wins=directional.filter(x=>x.correct===true).length,losses=directional.filter(x=>x.correct===false).length;
- stats.textContent="已验证："+done.length+" 条；待验证："+pending.length+" 条；方向性样本："+directional.length+" 条；方向命中："+wins+"；方向未命中："+losses+"；方向命中率："+(directional.length?(wins/directional.length*100).toFixed(2)+"%":"样本不足")+"。中性预测不计入方向命中率。";
- a.slice(-40).reverse().forEach(x=>{const tr=document.createElement("tr");const vals=[x.interval,x.direction,(x.score>0?"+":"")+x.score,x.basePrice,new Date(x.dueAt).toLocaleString(),x.validatedAt?(x.correct?"命中":"未命中")+"（"+x.changePct.toFixed(3)+"%）":"待验证"];vals.forEach(v=>{const td=document.createElement("td");td.textContent=v;tr.appendChild(td)});body.appendChild(tr)});
+ const neutralInBand=neutral.filter(x=>Number.isFinite(Number(x.changePct))&&Math.abs(Number(x.changePct))<0.1).length;
+ const avg=(xs,fn)=>xs.length?xs.reduce((s,x)=>s+fn(x),0)/xs.length:null;
+ const fmtPct=x=>x===null?"—":(x>=0?"+":"")+x.toFixed(3)+"%";
+ const avgChange=avg(done,x=>Number(x.changePct)),avgAbs=avg(done,x=>Math.abs(Number(x.changePct)));
+ const sorted=directional.slice().sort((x,y)=>Number(x.validatedAt)-Number(y.validatedAt));
+ let streak=0,streakType=null;
+ for(let i=sorted.length-1;i>=0;i--){const type=sorted[i].correct===true?"命中":"未命中";if(streakType===null)streakType=type;if(type!==streakType)break;streak++}
+ stats.replaceChildren();
+ const summary=document.createElement("p");
+ summary.textContent="总览：已验证 "+done.length+" 条；待验证 "+pending.length+" 条；方向性样本 "+directional.length+" 条；命中 "+wins+"；未命中 "+losses+"；方向命中率 "+(directional.length?(wins/directional.length*100).toFixed(2)+"%":"样本不足")+"。中性预测 "+neutral.length+" 条，其中实际波动小于 ±0.1% 的 "+neutralInBand+" 条。";
+ stats.appendChild(summary);
+ const extra=document.createElement("p");
+ extra.textContent="所有已验证预测平均涨跌幅："+fmtPct(avgChange)+"；平均绝对波动："+(avgAbs===null?"—":avgAbs.toFixed(3)+"%")+"；最近连续方向结果："+(streak?streakType+" "+streak+" 次":"暂无方向样本")+"。平均涨跌幅是价格变化统计，不代表扣除手续费后的收益。";
+ stats.appendChild(extra);
+ const table=document.createElement("table");
+ const head=document.createElement("thead"),hr=document.createElement("tr");
+ ["周期","已验证","方向样本","命中","未命中","方向命中率","中性数量","中性在±0.1%内","平均涨跌幅"].forEach(v=>{const th=document.createElement("th");th.textContent=v;hr.appendChild(th)});
+ head.appendChild(hr);table.appendChild(head);
+ const tb=document.createElement("tbody");
+ for(const period of forecastIntervals){
+  const group=done.filter(x=>x.interval===period),dirs=group.filter(x=>x.direction!=="中性"),ns=group.filter(x=>x.direction==="中性");
+  const w=dirs.filter(x=>x.correct===true).length,l=dirs.filter(x=>x.correct===false).length;
+  const ni=ns.filter(x=>Number.isFinite(Number(x.changePct))&&Math.abs(Number(x.changePct))<0.1).length;
+  const ac=avg(group,x=>Number(x.changePct));
+  const vals=[period,group.length,dirs.length,w,l,dirs.length?(w/dirs.length*100).toFixed(1)+"%":"—",ns.length,ns.length?ni:"—",fmtPct(ac)];
+  const tr=document.createElement("tr");vals.forEach(v=>{const td=document.createElement("td");td.textContent=String(v);tr.appendChild(td)});tb.appendChild(tr);
+ }
+ table.appendChild(tb);stats.appendChild(table);
+ a.slice(-40).reverse().forEach(x=>{const tr=document.createElement("tr");const outcome=x.validatedAt?(x.direction==="中性"?(Math.abs(Number(x.changePct))<0.1?"中性符合":"中性偏离"):(x.correct?"命中":"未命中"))+"（"+Number(x.changePct).toFixed(3)+"%）":"待验证";const vals=[x.interval,x.direction,(x.score>0?"+":"")+x.score,x.basePrice,new Date(x.dueAt).toLocaleString(),outcome];vals.forEach(v=>{const td=document.createElement("td");td.textContent=v;tr.appendChild(td)});body.appendChild(tr)});
  if(!a.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=6;td.textContent="暂无预测记录";tr.appendChild(td);body.appendChild(tr)}
 }
 document.getElementById("runForecast").addEventListener("click",async()=>{
@@ -203,7 +230,7 @@ document.getElementById("validateForecasts").addEventListener("click",async()=>{
     if(!target){errors.push(rec.symbol+" "+rec.interval+"：尚无目标收盘K线");continue}
     const targetClose=Number(target[4]),change=(targetClose/rec.basePrice-1)*100;
     rec.targetPrice=targetClose;rec.changePct=change;rec.validatedAt=Date.now();rec.targetCloseTime=Number(target[6]);
-    rec.correct=rec.direction==="看涨"?change>0:rec.direction==="看跌"?change<0:Math.abs(change)<0.1;
+    rec.correct=rec.direction==="中性"?null:(rec.direction==="看涨"?change>0:change<0);rec.neutralInBand=rec.direction==="中性"?Math.abs(change)<0.1:null;
     checked++;
    }catch(e){errors.push(rec.symbol+" "+rec.interval+"："+e.message)}
   }
