@@ -36,7 +36,7 @@
  <h2>一键预测上涨合约</h2>
  <p class="muted">在原有K线评分上增加5分钟OI持仓数量变化、主动买卖比和最新资金费率。A级需K线偏多且三项资金条件同时确认；B级为结构偏多但资金确认不完整；观察级证据较弱。资金数据缺失不按0处理，结果仅供研究，不是上涨保证。</p>
  <div class="toolbar"><button class="primary" id="scanRising">一键预测上涨合约</button><span id="risingStatus" class="muted">尚未预测</span></div>
- <div class="tablewrap"><table><thead><tr><th>交易对</th><th>价格</th><th>24h涨跌</th><th>4h趋势</th><th>5m动量</th><th>K线评分</th><th>OI数量变化</th><th>主动买卖比</th><th>资金费率</th><th>等级</th><th>判断</th></tr></thead><tbody id="risingRows"><tr><td colspan="11">等待预测</td></tr></tbody></table></div>
+ <div class="tablewrap"><table><thead><tr><th>交易对</th><th>价格</th><th>24h涨跌</th><th>4h趋势</th><th>1h趋势</th><th>15m位置</th><th>5m动量</th><th>K线评分</th><th>OI变化</th><th>主动买卖比</th><th>多空账户比</th><th>资金费率</th><th>标记溢价</th><th>等级</th><th>风险/失效条件</th></tr></thead><tbody id="risingRows"><tr><td colspan="15">等待预测</td></tr></tbody></table></div>
 </div>
 <div class="card">
  <h2>USDT 永续合约列表</h2>
@@ -283,18 +283,21 @@ async function scanCandidates(kind){
   const results=[];let finished=0;
   const analyzeOne=async(item)=>{
    try{
-    const [b5,b4,oiHist,takerHist,premium]=await Promise.all([
+    const [b5,b15,b1,b4,oiHist,takerHist,longShort,premium]=await Promise.all([
      getJSON(API+"/fapi/v1/klines?symbol="+encodeURIComponent(item.symbol)+"&interval=5m&limit=60"),
+     getJSON(API+"/fapi/v1/klines?symbol="+encodeURIComponent(item.symbol)+"&interval=15m&limit=60"),
+     getJSON(API+"/fapi/v1/klines?symbol="+encodeURIComponent(item.symbol)+"&interval=1h&limit=60"),
      getJSON(API+"/fapi/v1/klines?symbol="+encodeURIComponent(item.symbol)+"&interval=4h&limit=60"),
      kind==="rising"?getJSON(API+"/futures/data/openInterestHist?symbol="+encodeURIComponent(item.symbol)+"&period=5m&limit=3").catch(e=>({error:e.message})):Promise.resolve(null),
      kind==="rising"?getJSON(API+"/futures/data/takerlongshortRatio?symbol="+encodeURIComponent(item.symbol)+"&period=5m&limit=3").catch(e=>({error:e.message})):Promise.resolve(null),
+     kind==="rising"?getJSON(API+"/futures/data/globalLongShortAccountRatio?symbol="+encodeURIComponent(item.symbol)+"&period=5m&limit=3").catch(e=>({error:e.message})):Promise.resolve(null),
      kind==="rising"?getJSON(API+"/fapi/v1/premiumIndex?symbol="+encodeURIComponent(item.symbol)).catch(e=>({error:e.message})):Promise.resolve(null)
     ]);
-    const now=Date.now(),c5=b5.filter(k=>Number(k[6])<now),c4=b4.filter(k=>Number(k[6])<now);
-    if(c5.length<25||c4.length<50)throw new Error("完整K线不足");
-    const cl5=c5.map(k=>Number(k[4])),cl4=c4.map(k=>Number(k[4]));
-    const last5=c5[c5.length-1],last4=c4[c4.length-1];
-    const e20_4=ema(cl4,20),e50_4=ema(cl4,50),e20_5=ema(cl5,20);
+    const now=Date.now(),c5=b5.filter(k=>Number(k[6])<now),c15=b15.filter(k=>Number(k[6])<now),c1=b1.filter(k=>Number(k[6])<now),c4=b4.filter(k=>Number(k[6])<now);
+    if(c5.length<25||c15.length<50||c1.length<50||c4.length<50)throw new Error("完整K线不足");
+    const cl5=c5.map(k=>Number(k[4])),cl15=c15.map(k=>Number(k[4])),cl1=c1.map(k=>Number(k[4])),cl4=c4.map(k=>Number(k[4]));
+    const last5=c5[c5.length-1],last15=c15[c15.length-1],last1=c1[c1.length-1],last4=c4[c4.length-1];
+    const e20_4=ema(cl4,20),e50_4=ema(cl4,50),e20_1=ema(cl1,20),e50_1=ema(cl1,50),e20_15=ema(cl15,20),e20_5=ema(cl5,20);
     const mom5=(Number(last5[4])/Number(c5[c5.length-4][4])-1)*100;
     const qv5=c5.map(k=>Number(k[7])),avgq=qv5.slice(-21,-1).reduce((s,x)=>s+x,0)/20,vr=avgq?qv5[qv5.length-1]/avgq:NaN;
     const ranges=c5.slice(-20).map(k=>(Number(k[2])-Number(k[3]))/Number(k[4])*100);
@@ -303,20 +306,22 @@ async function scanCandidates(kind){
     const position=(Number(last5[4])-rangeLow)/(rangeHigh-rangeLow||1);
     const lows=c5.slice(-6).map(k=>Number(k[3])),risingLows=lows.slice(3).every((v,i)=>v>=lows[i+2]);
     const trend4=e20_4>e50_4&&Number(last4[4])>e20_4;
+    const trend1=e20_1>e50_1&&Number(last1[4])>e20_1,trend15=Number(last15[4])>e20_15;
     const compression=avgRange<1.8;
     const latentScore=(trend4?1:0)+(compression?2:0)+(risingLows?1:0)+(position<0.65?1:0)+(Math.abs(mom5)<0.5?1:0)+(vr<1.2?1:0);
-    let riseScore=0;if(trend4)riseScore+=2;if(Number(last5[4])>e20_5)riseScore++;if(mom5>0.15)riseScore+=2;if(vr>=1.2&&Number(last5[4])>Number(last5[1]))riseScore+=2;if(Number(item.priceChangePercent)>-5&&Number(item.priceChangePercent)<12)riseScore++;if(position>0.75&&Number(last5[4])>rangeHigh)riseScore++;
-    let oiChangePct=null,takerRatio=null,fundingRate=null;
+    let riseScore=0;if(trend4)riseScore+=2;if(trend1)riseScore+=2;if(trend15)riseScore++;if(Number(last5[4])>e20_5)riseScore++;if(mom5>0.15)riseScore+=2;if(vr>=1.2&&Number(last5[4])>Number(last5[1]))riseScore+=2;if(Number(item.priceChangePercent)>-5&&Number(item.priceChangePercent)<12)riseScore++;if(position>0.75&&Number(last5[4])>rangeHigh)riseScore++;
+    let oiChangePct=null,takerRatio=null,fundingRate=null,longShortRatio=null,basisPct=null;
     if(Array.isArray(oiHist)){const oiClosed=oiHist.filter(v=>Number(v.timestamp)<=Number(last5[6]));if(oiClosed.length>=2){const a=Number(oiClosed[oiClosed.length-2].sumOpenInterest),b=Number(oiClosed[oiClosed.length-1].sumOpenInterest);if(a>0&&Number.isFinite(b))oiChangePct=(b/a-1)*100;}}
     if(Array.isArray(takerHist)){const takerClosed=takerHist.filter(v=>Number(v.timestamp)<=Number(last5[6]));if(takerClosed.length){const n=Number(takerClosed[takerClosed.length-1].buySellRatio);if(Number.isFinite(n))takerRatio=n;}}
-    if(premium&&!premium.error){const n=Number(premium.lastFundingRate);if(Number.isFinite(n))fundingRate=n;}
+    if(Array.isArray(longShort)){const lsClosed=longShort.filter(v=>Number(v.timestamp)<=Number(last5[6]));if(lsClosed.length){const n=Number(lsClosed[lsClosed.length-1].longShortRatio);if(Number.isFinite(n))longShortRatio=n;}}
+    if(premium&&!premium.error){const n=Number(premium.lastFundingRate),mark=Number(premium.markPrice),index=Number(premium.indexPrice);if(Number.isFinite(n))fundingRate=n;if(mark>0&&index>0)basisPct=(mark/index-1)*100;}
     const oiPositive=oiChangePct!==null&&oiChangePct>0.1;
     const takerPositive=takerRatio!==null&&takerRatio>1.05;
     const fundingHealthy=fundingRate!==null&&fundingRate<0.0003&&fundingRate>-0.0005;
     const flowConfirmed=oiPositive&&takerPositive&&fundingHealthy;
     const flowEvidence=[oiPositive,takerPositive,fundingHealthy].filter(Boolean).length;
-    const tier=(trend4&&riseScore>=5&&flowConfirmed)?"A级":(trend4&&riseScore>=5&&flowEvidence>=1)?"B级":"观察级";
-    results.push({symbol:item.symbol,price:Number(item.lastPrice),qv:Number(item.quoteVolume),change24:Number(item.priceChangePercent),trend4:trend4?"4h偏多":"4h未转强",compression,risingLows,position,mom5,vr,latentScore,riseScore,oiChangePct,takerRatio,fundingRate,flowEvidence,tier,close5:Number(last5[4]),rangeHigh,rangeLow,avgRange});
+    const tier=(trend4&&trend1&&trend15&&riseScore>=7&&flowConfirmed)?"A级":(trend4&&riseScore>=6&&flowEvidence>=1)?"B级":"观察级";
+    results.push({symbol:item.symbol,price:Number(item.lastPrice),qv:Number(item.quoteVolume),change24:Number(item.priceChangePercent),trend4:trend4?"4h偏多":"4h未转强",trend1:trend1?"1h偏多":"1h未转强",trend15:trend15?"15m站上EMA20":"15m弱于EMA20",compression,risingLows,position,mom5,vr,latentScore,riseScore,oiChangePct,takerRatio,longShortRatio,fundingRate,basisPct,flowEvidence,tier,close5:Number(last5[4]),rangeHigh,rangeLow,avgRange});
    }catch(e){results.push({symbol:item.symbol,error:e.message})}
    finished++;
    status.textContent="已分析 "+finished+"/"+universe.length+"；有效 "+results.filter(x=>!x.error).length+" 个；失败 "+results.filter(x=>x.error).length+" 个…";
@@ -335,8 +340,8 @@ async function scanCandidates(kind){
    status.textContent="完成：预筛 "+universe.length+" 个，K线有效 "+valid.length+" 个，潜伏候选 "+chosen.length+" 个。数据时间 "+new Date().toLocaleString()+"。";
   }else{
    const tierRank={"A级":0,"B级":1,"观察级":2};const chosen=valid.filter(x=>x.riseScore>=5&&x.trend4==="4h偏多").sort((a,b)=>tierRank[a.tier]-tierRank[b.tier]||b.riseScore-a.riseScore||b.mom5-a.mom5);
-   if(!chosen.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=11;td.textContent="本轮没有达到偏多评分门槛的标的；不输出低质量候选。";tr.appendChild(td);body.appendChild(tr)}
-   chosen.forEach(x=>{const tr=document.createElement("tr");const oi=x.oiChangePct===null?"缺数据":(x.oiChangePct>=0?"+":"")+x.oiChangePct.toFixed(2)+"%";const taker=x.takerRatio===null?"缺数据":x.takerRatio.toFixed(3);const funding=x.fundingRate===null?"缺数据":(x.fundingRate*100).toFixed(4)+"%";const note=x.tier==="A级"?"K线与资金三项确认":x.tier==="B级"?"偏多结构，资金部分确认":"资金确认不足，谨慎观察";[x.symbol,fmtN(x.price),(x.change24>=0?"+":"")+x.change24.toFixed(2)+"%",x.trend4,(x.mom5>=0?"+":"")+x.mom5.toFixed(3)+"%",x.riseScore+"/9",oi,taker,funding,x.tier,note].forEach(v=>{const td=document.createElement("td");td.textContent=v;tr.appendChild(td)});body.appendChild(tr)});
+   if(!chosen.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=15;td.textContent="本轮没有达到偏多评分门槛的标的；不输出低质量候选。";tr.appendChild(td);body.appendChild(tr)}
+   chosen.forEach(x=>{const tr=document.createElement("tr");const oi=x.oiChangePct===null?"缺数据":(x.oiChangePct>=0?"+":"")+x.oiChangePct.toFixed(2)+"%";const taker=x.takerRatio===null?"缺数据":x.takerRatio.toFixed(3);const funding=x.fundingRate===null?"缺数据":(x.fundingRate*100).toFixed(4)+"%";const ls=x.longShortRatio===null?"缺数据":x.longShortRatio.toFixed(3);const basis=x.basisPct===null?"缺数据":(x.basisPct>=0?"+":"")+x.basisPct.toFixed(3)+"%";const note=x.tier==="A级"?"失效：5m收盘跌破近20根区间低点":x.tier==="B级"?"等待资金共振；跌破区间低点失效":"未满足多周期/资金确认";[x.symbol,fmtN(x.price),(x.change24>=0?"+":"")+x.change24.toFixed(2)+"%",x.trend4,x.trend1,x.trend15,(x.mom5>=0?"+":"")+x.mom5.toFixed(3)+"%",x.riseScore+"/12",oi,taker,ls,funding,basis,x.tier,note].forEach(v=>{const td=document.createElement("td");td.textContent=v;tr.appendChild(td)});body.appendChild(tr)});
    status.textContent="完成：预筛 "+universe.length+" 个，K线有效 "+valid.length+" 个，上涨观察候选 "+chosen.length+" 个（A级 "+chosen.filter(x=>x.tier==="A级").length+"，B级 "+chosen.filter(x=>x.tier==="B级").length+"，观察级 "+chosen.filter(x=>x.tier==="观察级").length+"）。数据时间 "+new Date().toLocaleString()+"。";
   }
   const failed=results.filter(x=>x.error).length;if(failed)status.textContent+=" 失败/缺失 "+failed+" 个，未将缺失数据视为零。";
