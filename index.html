@@ -46,6 +46,10 @@
  <div id="watchItems" class="muted">关注列表为空</div>
  <div class="tablewrap"><table><thead><tr><th>交易对</th><th>现价</th><th>24h涨跌</th><th>4h</th><th>1h</th><th>15m</th><th>5m</th><th>OI变化</th><th>主动买卖比</th><th>全体多空比</th><th>资金费率</th><th>综合建议</th><th>评分</th></tr></thead><tbody id="watchRows"><tr><td colspan="13">添加合约后点击一键扫描</td></tr></tbody></table></div>
  <p class="muted">建议说明：多周期方向是技术信号，不是涨跌保证。OI增加不等于净多头；全体账户多空比不代表大户持仓。关键数据缺失时会标记，不会当作利多/利空。</p>
+ <div class="controls"><label>自动复扫间隔 <select id="watchInterval"><option value="0">关闭</option><option value="5">每5分钟</option><option value="15" selected>每15分钟</option><option value="30">每30分钟</option><option value="60">每60分钟</option></select></label><button id="watchAuto">启动自动复扫</button><button id="watchNotify">开启信号提醒</button></div>
+ <p id="watchAutoStatus" class="muted">自动复扫仅在网页保持打开且浏览器允许运行时有效；iPhone锁屏或Safari进入后台后可能暂停。</p>
+ <h3>关注合约信号历史与验证</h3><p class="muted">每次扫描记录当时信号，以扫描时最近完成的5分钟收盘价为基准，15分钟后用已收盘5分钟K线验证方向。命中率只统计偏多/偏空信号；中性不计入方向命中率。样本少时不具统计意义。</p>
+ <div class="tablewrap"><table><thead><tr><th>合约</th><th>历史信号</th><th>已验证</th><th>命中</th><th>方向命中率</th><th>最近信号</th></tr></thead><tbody id="watchStats"><tr><td colspan="6">暂无历史记录</td></tr></tbody></table></div>
  <details><summary>查看关注扫描原始数据</summary><pre id="watchRaw">尚无扫描结果</pre></details>
 </div>
 <div class="card">
@@ -140,7 +144,7 @@ document.getElementById("getKlines").addEventListener("click",async()=>{
  btn.disabled=true;status.textContent="请求中…";out.textContent="";
  try{const data=await getJSON(API+"/fapi/v1/klines?symbol="+encodeURIComponent(symbol)+"&interval="+encodeURIComponent(interval)+"&limit=30");status.textContent="成功：返回 "+data.length+" 根 "+interval+" K线；读取时间 "+new Date().toLocaleString();out.textContent=JSON.stringify(data,null,2)}
  catch(e){status.textContent="读取失败："+e.message;out.textContent=String(e)}
- finally{btn.disabled=false}
+ finally{btn.disabled=false;watchScanBusy=false}
 });
 
 document.getElementById("getFlow").addEventListener("click",async()=>{
@@ -252,6 +256,34 @@ document.getElementById("runForecast").addEventListener("click",async()=>{
   }
   saveForecasts(records);status.textContent="完成："+symbol+" 四周期预测已保存到当前 Safari。";
   
+
+const WATCH_HISTORY_KEY="binance_watch_history_v1";
+let watchTimer=null,watchScanBusy=false;
+function readWatchHistory(){try{const a=JSON.parse(localStorage.getItem(WATCH_HISTORY_KEY)||"[]");return Array.isArray(a)?a:[]}catch{return []}}
+function saveWatchHistory(a){localStorage.setItem(WATCH_HISTORY_KEY,JSON.stringify(a.slice(-1500)))}
+function renderWatchStats(){
+ const body=document.getElementById("watchStats");body.replaceChildren();const hist=readWatchHistory(),syms=readWatch();
+ syms.forEach(sym=>{const a=hist.filter(x=>x.symbol===sym),done=a.filter(x=>x.validatedAt&&x.direction!=="暂不参与"),wins=done.filter(x=>x.correct).length,latest=a.at(-1);
+ const vals=[sym,a.length,done.length,wins,done.length?(wins/done.length*100).toFixed(1)+"%":"—",latest?latest.advice+" / "+new Date(latest.createdAt).toLocaleString():"—"];
+ const tr=document.createElement("tr");vals.forEach(v=>{const td=document.createElement("td");td.textContent=String(v);tr.appendChild(td)});body.appendChild(tr)});
+ if(!syms.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=6;td.textContent="暂无关注合约";tr.appendChild(td);body.appendChild(tr)}
+}
+async function validateWatchHistory(){
+ const hist=readWatchHistory(),now=Date.now(),pending=hist.filter(x=>!x.validatedAt&&x.dueAt<=now);
+ for(const item of pending){
+  try{const bars=await getJSON(API+"/fapi/v1/klines?symbol="+item.symbol+"&interval=5m&limit=8"),closed=bars.filter(k=>Number(k[6])<Date.now()&&Number(k[6])>=item.dueAt-300000);
+   if(!closed.length)continue;const end=Number(closed.at(-1)[4]),change=(end/Number(item.basePrice)-1)*100;
+   item.changePct=change;item.validatedAt=Date.now();item.correct=item.direction==="偏多观察"?change>0:item.direction==="偏空观察"?change<0:null;
+  }catch(e){item.validationError=e.message}
+ }
+ saveWatchHistory(hist);renderWatchStats();
+}
+function notifyWatchChanges(changes){
+ if(!changes.length)return;
+ const msg=changes.slice(0,5).map(x=>x.symbol+"："+x.from+"→"+x.to).join("；");
+ document.getElementById("watchAutoStatus").textContent="检测到信号变化："+msg;
+ if("Notification" in window&&Notification.permission==="granted"){try{new Notification("Binance 关注合约信号变化",{body:msg})}catch(e){}}
+}
 const WATCH_KEY="binance_watchlist_v1";
 function readWatch(){try{const a=JSON.parse(localStorage.getItem(WATCH_KEY)||"[]");return Array.isArray(a)?[...new Set(a.filter(x=>typeof x==="string"&&/^[A-Z0-9]+$/.test(x)))]:[]}catch{return []}}
 function saveWatch(a){localStorage.setItem(WATCH_KEY,JSON.stringify([...new Set(a)].slice(0,50)));renderWatch()}
@@ -272,6 +304,9 @@ document.getElementById("addCurrentWatch").addEventListener("click",()=>{const s
 document.getElementById("watchInput").addEventListener("keydown",e=>{if(e.key==="Enter")document.getElementById("addWatch").click()});
 renderWatch();
 document.getElementById("scanWatch").addEventListener("click",async()=>{
+ if(watchScanBusy)return;watchScanBusy=true;
+ const previous=new Map(readWatchHistory().filter(x=>x.latest).map(x=>[x.symbol,x.advice]));
+
  const btn=document.getElementById("scanWatch"),status=document.getElementById("watchStatus"),body=document.getElementById("watchRows"),raw=document.getElementById("watchRaw");
  const list=readWatch();if(!list.length){status.textContent="请先添加关注合约";return}
  btn.disabled=true;body.replaceChildren();raw.textContent="";const results=[],errors=[];
@@ -310,6 +345,16 @@ document.getElementById("scanWatch").addEventListener("click",async()=>{
     results.push({symbol,price:Number(premium.markPrice)||t[0].close,intervals:Object.fromEntries(intervals.map((p,i)=>[p,t[i]])),oiChangePct:oiChange,takerBuySellRatio:takerRatio,globalLongShortRatio:lsRatio,fundingRatePct:funding,score:total,advice,missing,readAt:new Date().toISOString()});
    }catch(e){errors.push({symbol,error:e.message})}
   }
+  
+  const history=readWatchHistory(),changes=[];
+  for(const x of results){
+   const old=[...history].reverse().find(h=>h.symbol===x.symbol&&h.latest);
+   if(old&&old.advice!==x.advice)changes.push({symbol:x.symbol,from:old.advice,to:x.advice});
+   const five=x.intervals["5m"],basePrice=five.close,baseCloseTime=five.closeTime;
+   history.push({symbol:x.symbol,direction:x.advice,advice:x.advice,score:x.score,basePrice,baseCloseTime,createdAt:Date.now(),dueAt:baseCloseTime+15*60*1000,latest:true,validatedAt:null,correct:null,changePct:null});
+   history.forEach(h=>{if(h.symbol===x.symbol&&h!==history.at(-1))h.latest=false});
+  }
+  saveWatchHistory(history);notifyWatchChanges(changes);await validateWatchHistory();renderWatchStats();
   const tickerMap=new Map(allTickers.map(x=>[x.symbol,x]));
   results.sort((a,b)=>b.score-a.score);
   for(const x of results){
@@ -322,6 +367,22 @@ document.getElementById("scanWatch").addEventListener("click",async()=>{
  }catch(e){status.textContent="扫描失败："+e.message}
  finally{btn.disabled=false}
 });
+
+
+document.getElementById("watchNotify").addEventListener("click",async()=>{
+ const st=document.getElementById("watchAutoStatus");
+ if(!("Notification" in window)){st.textContent="此浏览器不支持网页通知";return}
+ try{const p=await Notification.requestPermission();st.textContent=p==="granted"?"已允许网页信号提醒；需保持网页可运行。": "通知权限未开启："+p}catch(e){st.textContent="通知权限请求失败："+e.message}
+});
+document.getElementById("watchAuto").addEventListener("click",()=>{
+ const st=document.getElementById("watchAutoStatus"),btn=document.getElementById("watchAuto"),mins=Number(document.getElementById("watchInterval").value);
+ if(watchTimer){clearInterval(watchTimer);watchTimer=null}
+ if(!mins){btn.textContent="启动自动复扫";st.textContent="自动复扫已关闭";return}
+ watchTimer=setInterval(()=>{if(!document.hidden&&!watchScanBusy)document.getElementById("scanWatch").click()},mins*60*1000);
+ btn.textContent="停止自动复扫";st.textContent="自动复扫已启动：每"+mins+"分钟；网页需保持打开且处于前台。";
+});
+document.getElementById("watchInterval").addEventListener("change",()=>{if(watchTimer)document.getElementById("watchAuto").click()});
+renderWatchStats();
 
 renderForecasts();
  }catch(e){status.textContent="预测中断："+e.message+"。本轮未保存，请检查网络或交易对后重试。"}
