@@ -34,7 +34,7 @@
 </div>
 <div class="card" id="risingCard">
  <h2>一键预测上涨合约</h2>
- <p class="muted">对预筛候选检查4小时趋势、5分钟动量、EMA位置、成交额放大与主动买入量。按规则评分排序，只列出数据完整且偏多条件较多的合约；这是模型筛选结果，不是上涨保证。</p>
+ <p class="muted">对预筛候选检查4小时趋势、5分钟动量、EMA位置、成交额放大与区间突破。按规则评分排序，只列出数据完整且偏多条件较多的合约；这是模型筛选结果，不是上涨保证。</p>
  <div class="toolbar"><button class="primary" id="scanRising">一键预测上涨合约</button><span id="risingStatus" class="muted">尚未预测</span></div>
  <div class="tablewrap"><table><thead><tr><th>交易对</th><th>价格</th><th>24h涨跌</th><th>4h趋势</th><th>5m动量</th><th>成交量比</th><th>评分</th><th>判断</th></tr></thead><tbody id="risingRows"><tr><td colspan="8">等待预测</td></tr></tbody></table></div>
 </div>
@@ -318,7 +318,7 @@ async function scanCandidates(kind){
   }else{
    const chosen=valid.filter(x=>x.riseScore>=5&&x.trend4==="4h偏多").sort((a,b)=>b.riseScore-a.riseScore||b.mom5-a.mom5);
    if(!chosen.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=8;td.textContent="本轮没有达到偏多评分门槛的标的；不输出低质量候选。";tr.appendChild(td);body.appendChild(tr)}
-   chosen.slice(0,30).forEach(x=>{const tr=document.createElement("tr");[x.symbol,fmtN(x.price),(x.change24>=0?"+":"")+x.change24.toFixed(2)+"%",x.trend4,(x.mom5>=0?"+":"")+x.mom5.toFixed(3)+"%",Number.isFinite(x.vr)?x.vr.toFixed(2)+"倍":"—",x.riseScore+"/8","偏多观察，非确定预测"].forEach(v=>{const td=document.createElement("td");td.textContent=v;tr.appendChild(td)});body.appendChild(tr)});
+   chosen.slice(0,30).forEach(x=>{const tr=document.createElement("tr");[x.symbol,fmtN(x.price),(x.change24>=0?"+":"")+x.change24.toFixed(2)+"%",x.trend4,(x.mom5>=0?"+":"")+x.mom5.toFixed(3)+"%",Number.isFinite(x.vr)?x.vr.toFixed(2)+"倍":"—",x.riseScore+"/9","偏多观察，非确定预测"].forEach(v=>{const td=document.createElement("td");td.textContent=v;tr.appendChild(td)});body.appendChild(tr)});
    status.textContent="完成：预筛 "+universe.length+" 个，K线有效 "+valid.length+" 个，上涨观察候选 "+chosen.length+" 个。数据时间 "+new Date().toLocaleString()+"。";
   }
   const failed=results.filter(x=>x.error).length;if(failed)status.textContent+=" 失败/缺失 "+failed+" 个，未将缺失数据视为零。";
