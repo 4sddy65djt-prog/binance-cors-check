@@ -28,7 +28,7 @@
 </div>
 <div class="card" id="scannerCard">
  <h2>全市场潜伏币扫描</h2>
- <p class="muted">默认筛选：价格不高于 0.50 USDT、24小时成交额不低于 500万美元；先按成交额预筛，再分析4小时结构与5分钟压缩。扫描范围受接口频率保护，最多深度分析前60个候选，不代表全市场每个合约都已完成深度核验。</p>
+ <p class="muted">默认筛选：价格不高于 0.50 USDT、24小时成交额不低于 500万美元；先按成交额预筛，再分析4小时结构与5分钟压缩。扫描全部符合预筛条件的合约；采用分批、限并发方式读取5分钟和4小时K线，并报告成功与失败数量。</p>
  <div class="toolbar"><button class="primary" id="scanLatent">开始扫描潜伏币</button><span id="latentStatus" class="muted">尚未扫描</span></div>
  <div class="tablewrap"><table><thead><tr><th>交易对</th><th>价格</th><th>24h成交额</th><th>4h趋势</th><th>5m结构</th><th>潜伏评分</th><th>标签</th></tr></thead><tbody id="latentRows"><tr><td colspan="7">等待扫描</td></tr></tbody></table></div>
 </div>
@@ -313,7 +313,7 @@ async function scanCandidates(kind){
   if(kind==="latent"){
    const chosen=valid.filter(x=>x.latentScore>=4&&x.compression).sort((a,b)=>b.latentScore-a.latentScore||a.qv-b.qv);
    if(!chosen.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=7;td.textContent="本轮没有达到潜伏条件的标的；不降低条件凑数。";tr.appendChild(td);body.appendChild(tr)}
-   chosen.slice(0,30).forEach(x=>{const tr=document.createElement("tr");[x.symbol,fmtN(x.price),fmtN(x.qv),x.trend4,x.compression?"波动收敛":"未收敛",x.latentScore+"/7",x.risingLows?"低点抬高":"观察中"].forEach(v=>{const td=document.createElement("td");td.textContent=v;tr.appendChild(td)});body.appendChild(tr)});
+   chosen.forEach(x=>{const tr=document.createElement("tr");[x.symbol,fmtN(x.price),fmtN(x.qv),x.trend4,x.compression?"波动收敛":"未收敛",x.latentScore+"/7",x.risingLows?"低点抬高":"观察中"].forEach(v=>{const td=document.createElement("td");td.textContent=v;tr.appendChild(td)});body.appendChild(tr)});
    status.textContent="完成：预筛 "+universe.length+" 个，K线有效 "+valid.length+" 个，潜伏候选 "+chosen.length+" 个。数据时间 "+new Date().toLocaleString()+"。";
   }else{
    const chosen=valid.filter(x=>x.riseScore>=5&&x.trend4==="4h偏多").sort((a,b)=>b.riseScore-a.riseScore||b.mom5-a.mom5);
