@@ -72,6 +72,12 @@
  <p id="forecastStatus" class="muted">尚未生成预测。</p>
  <div class="tablewrap"><table><thead><tr><th>周期</th><th>方向</th><th>评分</th><th>基准价</th><th>目标时间</th><th>状态</th></tr></thead><tbody id="forecastRows"><tr><td colspan="6">暂无预测记录</td></tr></tbody></table></div>
  <h3>历史验证统计</h3><div id="forecastStats" class="muted">尚无已验证样本。</div>
+ <h3>历史回测（单标的、滚动样本）</h3>
+ <p class="muted">按当前同一套评分规则，逐根使用当时可见的历史K线生成预测，再用后续3根完整K线验证；不使用未来数据参与指标计算。回测为单标的研究，不代表全市场历史回测。</p>
+ <div class="toolbar"><label>回测周期 <select id="backtestInterval"><option value="5m">5分钟</option><option value="15m">15分钟</option><option value="1h">1小时</option><option value="4h">4小时</option></select></label><label>往返成本(bps) <input id="backtestCost" type="number" min="0" max="100" step="1" value="10" style="width:90px;flex:0 0 90px"></label><button class="primary" id="runBacktest">运行历史回测</button></div>
+ <p id="backtestStatus" class="muted">选择周期后运行；默认往返成本10基点（0.10%），可自行调整。</p>
+ <div class="tablewrap"><table><thead><tr><th>样本</th><th>看涨/看跌预测</th><th>方向命中率</th><th>中性样本</th><th>中性±0.1%内</th><th>平均预测后涨跌</th><th>扣成本平均变化</th><th>平均最大有利波动</th><th>平均最大不利波动</th></tr></thead><tbody id="backtestRows"><tr><td colspan="9">尚未回测</td></tr></tbody></table></div>
+ <details><summary>查看回测逐笔样本</summary><pre id="backtestRaw">尚无回测结果</pre></details>
  <details><summary>查看预测记录（本机保存）</summary><pre id="forecastRaw">[]</pre></details>
  <p class="muted">本版规则透明但尚未证明有效：EMA 趋势、最近收盘方向、短期动量与成交量共同计分。每个周期以最近一根完整 K 线为基准，观察未来 3 根该周期 K 线；方向命中率只统计看涨/看跌；中性单独统计实际波动是否落在±0.1%以内。分周期统计包括样本量、命中率与平均涨跌幅。平均涨跌幅不扣除手续费和滑点，不能直接视为策略收益。记录保存在当前 Safari 本地，清除网站数据可能丢失。</p>
 </div>
@@ -398,6 +404,48 @@ document.getElementById("analyzeAll").addEventListener("click",async()=>{
   status.textContent="分析完成："+(tasks.length-fail)+"/"+tasks.length+" 组接口成功；数据时间 "+new Date().toLocaleString()+"。"+(fail?"部分数据缺失，详见原始数据。":"全部请求成功。");
   document.getElementById("runForecast").click();
  }catch(e){status.className="status bad";status.textContent="分析失败："+e.message}
+ finally{btn.disabled=false}
+});
+
+
+function historicalScore(closed,endIndex){
+ const slice=closed.slice(0,endIndex+1),closes=slice.map(k=>Number(k[4])),volumes=slice.map(k=>Number(k[7]));
+ if(closes.length<55)return null;
+ const last=slice[slice.length-1],prev=slice[slice.length-2],lastClose=Number(last[4]),e20=ema(closes,20),e50=ema(closes,50);
+ const momentum=(lastClose/Number(slice[slice.length-4][4])-1)*100;
+ const avgVol=volumes.slice(-21,-1).reduce((a,b)=>a+b,0)/20,volRatio=avgVol?volumes[volumes.length-1]/avgVol:NaN;
+ let score=0;
+ if(lastClose>e20)score++;else if(lastClose<e20)score--;
+ if(e20>e50)score++;else if(e20<e50)score--;
+ if(lastClose>Number(prev[4]))score++;else if(lastClose<Number(prev[4]))score--;
+ if(momentum>0.15)score++;else if(momentum< -0.15)score--;
+ if(Number.isFinite(volRatio)&&volRatio>=1.2){if(lastClose>Number(last[1]))score++;else if(lastClose<Number(last[1]))score--}
+ return {score,direction:score>=2?"看涨":score<=-2?"看跌":"中性",basePrice:lastClose,momentumPct:momentum,volRatio,baseCloseTime:Number(last[6])};
+}
+document.getElementById("runBacktest").addEventListener("click",async()=>{
+ const btn=document.getElementById("runBacktest"),status=document.getElementById("backtestStatus"),body=document.getElementById("backtestRows"),raw=document.getElementById("backtestRaw");
+ const symbol=document.getElementById("symbol").value.trim().toUpperCase(),period=document.getElementById("backtestInterval").value,costBps=Number(document.getElementById("backtestCost").value);
+ if(!/^[A-Z0-9]+$/.test(symbol)){status.textContent="交易对格式不正确";return}
+ if(!Number.isFinite(costBps)||costBps<0||costBps>100){status.textContent="往返成本需在0至100基点之间";return}
+ btn.disabled=true;body.replaceChildren();status.textContent="正在读取 "+symbol+" "+period+" 最多500根K线…";
+ try{
+  const bars=await getJSON(API+"/fapi/v1/klines?symbol="+encodeURIComponent(symbol)+"&interval="+period+"&limit=500");
+  const closed=bars.filter(k=>Number(k[6])<Date.now()),samples=[];
+  for(let i=54;i<closed.length-3;i++){
+   const pred=historicalScore(closed,i);if(!pred)continue;
+   const future=closed.slice(i+1,i+4),target=future[future.length-1],change=(Number(target[4])/pred.basePrice-1)*100;
+   const high=Math.max(...future.map(k=>Number(k[2]))),low=Math.min(...future.map(k=>Number(k[3])));
+   const mfe=(high/pred.basePrice-1)*100,mae=(low/pred.basePrice-1)*100;
+   samples.push({...pred,targetClose:Number(target[4]),targetCloseTime:Number(target[6]),changePct:change,mfePct:mfe,maePct:mae,correct:pred.direction==="中性"?null:(pred.direction==="看涨"?change>0:change<0),netChangePct:pred.direction==="中性"?null:(pred.direction==="看涨"?change-costBps/100: -change-costBps/100)});
+  }
+  const dirs=samples.filter(x=>x.direction!=="中性"),neutral=samples.filter(x=>x.direction==="中性"),wins=dirs.filter(x=>x.correct).length,neutralHit=neutral.filter(x=>Math.abs(x.changePct)<0.1).length;
+  const avg=(a,f)=>a.length?a.reduce((z,x)=>z+f(x),0)/a.length:null,fmtp=x=>x===null?"—":(x>=0?"+":"")+x.toFixed(3)+"%";
+  const vals=[samples.length,dirs.length,(dirs.length?wins/dirs.length*100:null),neutral.length,(neutral.length?neutralHit/neutral.length*100:null),avg(samples,x=>x.changePct),avg(dirs,x=>x.netChangePct),avg(samples,x=>x.mfePct),avg(samples,x=>x.maePct)];
+  const tr=document.createElement("tr");vals.forEach((v,i)=>{const td=document.createElement("td");td.textContent=i===2||i===4?(v===null?"—":v.toFixed(2)+"%"):i===0||i===1||i===3?String(v):fmtp(v);tr.appendChild(td)});body.appendChild(tr);
+  const winsPct=dirs.length?wins/dirs.length*100:null,netAvg=avg(dirs,x=>x.netChangePct);
+  status.textContent="完成："+symbol+" "+period+"；已收盘K线 "+closed.length+" 根；有效滚动样本 "+samples.length+" 条；方向样本 "+dirs.length+" 条；成本假设 "+costBps+" bps（往返）。方向命中率仅统计涨跌方向，不代表盈利率。";
+  raw.textContent=JSON.stringify({symbol,period,readAt:new Date().toISOString(),source:"Binance USD-M /fapi/v1/klines",barsRequested:500,closedBars:closed.length,costBps,summary:{sampleCount:samples.length,directionalCount:dirs.length,wins,losses:dirs.length-wins,directionalHitRatePct:winsPct,neutralCount:neutral.length,neutralInBand:neutralHit,neutralInBandPct:neutral.length?neutralHit/neutral.length*100:null,avgChangePct:avg(samples,x=>x.changePct),avgNetDirectionalPct:netAvg,avgMfePct:avg(samples,x=>x.mfePct),avgMaePct:avg(samples,x=>x.maePct)},samples},null,2);
+ }catch(e){status.textContent="回测失败："+e.message;raw.textContent=String(e)}
  finally{btn.disabled=false}
 });
 
