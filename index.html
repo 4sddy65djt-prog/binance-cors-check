@@ -33,6 +33,17 @@
  <small>数组字段顺序：开盘时间、开盘价、最高价、最低价、收盘价、成交量、收盘时间、成交额、成交笔数、主动买入成交量、主动买入成交额、忽略字段。</small>
 </div>
 <div class="card">
+ <h2>资金与持仓数据（指定合约）</h2>
+ <div class="controls">
+  <select id="flowPeriod"><option value="5m">5 分钟</option><option value="15m">15 分钟</option><option value="1h">1 小时</option><option value="4h">4 小时</option></select>
+  <button class="primary" id="getFlow">读取 OI / 资金费率 / 主动买卖量</button>
+ </div>
+ <p id="flowStatus" class="muted">读取上方交易对输入框中的合约，例如 BTCUSDT。</p>
+ <div class="tablewrap"><table><thead><tr><th>指标</th><th>最新值</th><th>说明</th></tr></thead><tbody id="flowRows"><tr><td colspan="3">尚未读取</td></tr></tbody></table></div>
+ <p class="muted">注意：OI 是未平仓合约总量，不代表净多头。价格上涨且 OI 上升也不能单独证明多头占优。主动买卖量反映 taker 成交方向，不等于账户净持仓方向。</p>
+ <details><summary>查看原始资金与持仓 JSON</summary><pre id="flowRaw">尚未读取</pre></details>
+</div>
+<div class="card">
  <h2>接口说明</h2>
  <p class="muted">本版读取 exchangeInfo、ticker/24hr 和 klines。数据为接口返回时的快照，不代表逐笔实时推送；刷新按钮会重新请求。若接口受网络、地区或 CORS 限制，会显示错误，不会伪造数据。</p>
  <details><summary>查看原始交易规则数据</summary><pre id="exchangeData">尚未加载</pre></details>
