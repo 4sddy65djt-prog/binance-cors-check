@@ -34,9 +34,9 @@
 </div>
 <div class="card" id="risingCard">
  <h2>一键预测上涨合约</h2>
- <p class="muted">对预筛候选检查4小时趋势、5分钟动量、EMA位置、成交额放大与区间突破。按规则评分排序，只列出数据完整且偏多条件较多的合约；这是模型筛选结果，不是上涨保证。</p>
+ <p class="muted">在原有K线评分上增加5分钟OI持仓价值变化、主动买卖比和最新资金费率。A级需K线偏多且三项资金条件同时确认；B级为结构偏多但资金确认不完整；观察级证据较弱。资金数据缺失不按0处理，结果仅供研究，不是上涨保证。</p>
  <div class="toolbar"><button class="primary" id="scanRising">一键预测上涨合约</button><span id="risingStatus" class="muted">尚未预测</span></div>
- <div class="tablewrap"><table><thead><tr><th>交易对</th><th>价格</th><th>24h涨跌</th><th>4h趋势</th><th>5m动量</th><th>成交量比</th><th>评分</th><th>判断</th></tr></thead><tbody id="risingRows"><tr><td colspan="8">等待预测</td></tr></tbody></table></div>
+ <div class="tablewrap"><table><thead><tr><th>交易对</th><th>价格</th><th>24h涨跌</th><th>4h趋势</th><th>5m动量</th><th>K线评分</th><th>OI价值变化</th><th>主动买卖比</th><th>资金费率</th><th>等级</th><th>判断</th></tr></thead><tbody id="risingRows"><tr><td colspan="11">等待预测</td></tr></tbody></table></div>
 </div>
 <div class="card">
  <h2>USDT 永续合约列表</h2>
@@ -283,9 +283,12 @@ async function scanCandidates(kind){
   const results=[];let finished=0;
   const analyzeOne=async(item)=>{
    try{
-    const [b5,b4]=await Promise.all([
+    const [b5,b4,oiHist,takerHist,premium]=await Promise.all([
      getJSON(API+"/fapi/v1/klines?symbol="+encodeURIComponent(item.symbol)+"&interval=5m&limit=60"),
-     getJSON(API+"/fapi/v1/klines?symbol="+encodeURIComponent(item.symbol)+"&interval=4h&limit=60")
+     getJSON(API+"/fapi/v1/klines?symbol="+encodeURIComponent(item.symbol)+"&interval=4h&limit=60"),
+     kind==="rising"?getJSON(API+"/futures/data/openInterestHist?symbol="+encodeURIComponent(item.symbol)+"&period=5m&limit=3").catch(e=>({error:e.message})):Promise.resolve(null),
+     kind==="rising"?getJSON(API+"/futures/data/takerlongshortRatio?symbol="+encodeURIComponent(item.symbol)+"&period=5m&limit=3").catch(e=>({error:e.message})):Promise.resolve(null),
+     kind==="rising"?getJSON(API+"/fapi/v1/premiumIndex?symbol="+encodeURIComponent(item.symbol)).catch(e=>({error:e.message})):Promise.resolve(null)
     ]);
     const now=Date.now(),c5=b5.filter(k=>Number(k[6])<now),c4=b4.filter(k=>Number(k[6])<now);
     if(c5.length<25||c4.length<50)throw new Error("完整K线不足");
@@ -303,7 +306,17 @@ async function scanCandidates(kind){
     const compression=avgRange<1.8;
     const latentScore=(trend4?1:0)+(compression?2:0)+(risingLows?1:0)+(position<0.65?1:0)+(Math.abs(mom5)<0.5?1:0)+(vr<1.2?1:0);
     let riseScore=0;if(trend4)riseScore+=2;if(Number(last5[4])>e20_5)riseScore++;if(mom5>0.15)riseScore+=2;if(vr>=1.2&&Number(last5[4])>Number(last5[1]))riseScore+=2;if(Number(item.priceChangePercent)>-5&&Number(item.priceChangePercent)<12)riseScore++;if(position>0.75&&Number(last5[4])>rangeHigh)riseScore++;
-    results.push({symbol:item.symbol,price:Number(item.lastPrice),qv:Number(item.quoteVolume),change24:Number(item.priceChangePercent),trend4:trend4?"4h偏多":"4h未转强",compression,risingLows,position,mom5,vr,latentScore,riseScore,close5:Number(last5[4]),rangeHigh,rangeLow,avgRange});
+    let oiChangePct=null,takerRatio=null,fundingRate=null;
+    if(Array.isArray(oiHist)&&oiHist.length>=2){const a=Number(oiHist[oiHist.length-2].sumOpenInterestValue),b=Number(oiHist[oiHist.length-1].sumOpenInterestValue);if(a>0&&Number.isFinite(b))oiChangePct=(b/a-1)*100;}
+    if(Array.isArray(takerHist)&&takerHist.length){const n=Number(takerHist[takerHist.length-1].buySellRatio);if(Number.isFinite(n))takerRatio=n;}
+    if(premium&&!premium.error){const n=Number(premium.lastFundingRate);if(Number.isFinite(n))fundingRate=n;}
+    const oiPositive=oiChangePct!==null&&oiChangePct>0.1;
+    const takerPositive=takerRatio!==null&&takerRatio>1.05;
+    const fundingHealthy=fundingRate!==null&&fundingRate<0.0003&&fundingRate>-0.0005;
+    const flowConfirmed=oiPositive&&takerPositive&&fundingHealthy;
+    const flowEvidence=[oiPositive,takerPositive,fundingHealthy].filter(Boolean).length;
+    const tier=(trend4&&riseScore>=5&&flowConfirmed)?"A级":(trend4&&riseScore>=5&&flowEvidence>=1)?"B级":"观察级";
+    results.push({symbol:item.symbol,price:Number(item.lastPrice),qv:Number(item.quoteVolume),change24:Number(item.priceChangePercent),trend4:trend4?"4h偏多":"4h未转强",compression,risingLows,position,mom5,vr,latentScore,riseScore,oiChangePct,takerRatio,fundingRate,flowEvidence,tier,close5:Number(last5[4]),rangeHigh,rangeLow,avgRange});
    }catch(e){results.push({symbol:item.symbol,error:e.message})}
    finished++;
    status.textContent="已分析 "+finished+"/"+universe.length+"；有效 "+results.filter(x=>!x.error).length+" 个；失败 "+results.filter(x=>x.error).length+" 个…";
@@ -321,10 +334,10 @@ async function scanCandidates(kind){
    chosen.forEach(x=>{const tr=document.createElement("tr");[x.symbol,fmtN(x.price),fmtN(x.qv),x.trend4,x.compression?"波动收敛":"未收敛",x.latentScore+"/7",x.risingLows?"低点抬高":"观察中"].forEach(v=>{const td=document.createElement("td");td.textContent=v;tr.appendChild(td)});body.appendChild(tr)});
    status.textContent="完成：预筛 "+universe.length+" 个，K线有效 "+valid.length+" 个，潜伏候选 "+chosen.length+" 个。数据时间 "+new Date().toLocaleString()+"。";
   }else{
-   const chosen=valid.filter(x=>x.riseScore>=5&&x.trend4==="4h偏多").sort((a,b)=>b.riseScore-a.riseScore||b.mom5-a.mom5);
-   if(!chosen.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=8;td.textContent="本轮没有达到偏多评分门槛的标的；不输出低质量候选。";tr.appendChild(td);body.appendChild(tr)}
-   chosen.forEach(x=>{const tr=document.createElement("tr");[x.symbol,fmtN(x.price),(x.change24>=0?"+":"")+x.change24.toFixed(2)+"%",x.trend4,(x.mom5>=0?"+":"")+x.mom5.toFixed(3)+"%",Number.isFinite(x.vr)?x.vr.toFixed(2)+"倍":"—",x.riseScore+"/9","偏多观察，非确定预测"].forEach(v=>{const td=document.createElement("td");td.textContent=v;tr.appendChild(td)});body.appendChild(tr)});
-   status.textContent="完成：预筛 "+universe.length+" 个，K线有效 "+valid.length+" 个，上涨观察候选 "+chosen.length+" 个。数据时间 "+new Date().toLocaleString()+"。";
+   const tierRank={"A级":0,"B级":1,"观察级":2};const chosen=valid.filter(x=>x.riseScore>=5&&x.trend4==="4h偏多").sort((a,b)=>tierRank[a.tier]-tierRank[b.tier]||b.riseScore-a.riseScore||b.mom5-a.mom5);
+   if(!chosen.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=11;td.textContent="本轮没有达到偏多评分门槛的标的；不输出低质量候选。";tr.appendChild(td);body.appendChild(tr)}
+   chosen.forEach(x=>{const tr=document.createElement("tr");const oi=x.oiChangePct===null?"缺数据":(x.oiChangePct>=0?"+":"")+x.oiChangePct.toFixed(2)+"%";const taker=x.takerRatio===null?"缺数据":x.takerRatio.toFixed(3);const funding=x.fundingRate===null?"缺数据":(x.fundingRate*100).toFixed(4)+"%";const note=x.tier==="A级"?"K线与资金三项确认":x.tier==="B级"?"偏多结构，资金部分确认":"资金确认不足，谨慎观察";[x.symbol,fmtN(x.price),(x.change24>=0?"+":"")+x.change24.toFixed(2)+"%",x.trend4,(x.mom5>=0?"+":"")+x.mom5.toFixed(3)+"%",x.riseScore+"/9",oi,taker,funding,x.tier,note].forEach(v=>{const td=document.createElement("td");td.textContent=v;tr.appendChild(td)});body.appendChild(tr)});
+   status.textContent="完成：预筛 "+universe.length+" 个，K线有效 "+valid.length+" 个，上涨观察候选 "+chosen.length+" 个（A级 "+chosen.filter(x=>x.tier==="A级").length+"，B级 "+chosen.filter(x=>x.tier==="B级").length+"，观察级 "+chosen.filter(x=>x.tier==="观察级").length+"）。数据时间 "+new Date().toLocaleString()+"。";
   }
   const failed=results.filter(x=>x.error).length;if(failed)status.textContent+=" 失败/缺失 "+failed+" 个，未将缺失数据视为零。";
  }catch(e){status.textContent="扫描失败："+e.message}
