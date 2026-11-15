@@ -44,7 +44,7 @@
  <div class="controls"><input id="watchInput" placeholder="输入交易对，例如 AKEUSDT、DOGSUSDT"><button id="addWatch" class="primary">添加关注</button><button id="addCurrentWatch">添加顶部分析标的</button><button id="scanWatch" class="primary">一键扫描关注列表</button></div>
  <p id="watchStatus" class="status">尚未扫描</p>
  <div id="watchItems" class="muted">关注列表为空</div>
- <div class="tablewrap"><table><thead><tr><th>交易对</th><th>现价</th><th>24h涨跌</th><th>4h</th><th>1h</th><th>15m</th><th>5m</th><th>OI变化</th><th>主动买卖比</th><th>全体多空比</th><th>资金费率</th><th>综合建议</th><th>评分</th></tr></thead><tbody id="watchRows"><tr><td colspan="13">添加合约后点击一键扫描</td></tr></tbody></table></div>
+ <div class="tablewrap"><table><thead><tr><th>交易对</th><th>现价</th><th>24h涨跌</th><th>4h</th><th>1h</th><th>15m</th><th>5m</th><th>OI变化</th><th>主动买卖比</th><th>全体多空比</th><th>资金费率</th><th>综合建议</th><th>评分</th><th>支撑参考</th><th>阻力参考</th><th>突破/跌破触发</th><th>结构失效价</th><th>1R目标</th><th>2R目标</th></tr></thead><tbody id="watchRows"><tr><td colspan="19">添加合约后点击一键扫描</td></tr></tbody></table></div>
  <p class="muted">建议说明：多周期方向是技术信号，不是涨跌保证。OI增加不等于净多头；全体账户多空比不代表大户持仓。关键数据缺失时会标记，不会当作利多/利空。</p>
  <div class="controls"><label>自动复扫间隔 <select id="watchInterval"><option value="0">关闭</option><option value="5">每5分钟</option><option value="15" selected>每15分钟</option><option value="30">每30分钟</option><option value="60">每60分钟</option></select></label><button id="watchAuto">启动自动复扫</button><button id="watchNotify">开启信号提醒</button></div>
  <p id="watchAutoStatus" class="muted">自动复扫仅在网页保持打开且浏览器允许运行时有效；iPhone锁屏或Safari进入后台后可能暂停。</p>
@@ -316,7 +316,10 @@ document.getElementById("scanWatch").addEventListener("click",async()=>{
   const closes=closed.map(k=>Number(k[4])),last=closes.at(-1),e20=ema(closes,20),e50=ema(closes,50);
   const mom=(last/closes.at(-4)-1)*100;
   let score=(last>e20?1:last<e20?-1:0)+(e20>e50?1:e20<e50?-1:0)+(last>closes.at(-2)?1:last<closes.at(-2)?-1:0)+(mom>0.15?1:mom< -0.15?-1:0);
-  return {direction:score>=2?"偏多":score<=-2?"偏空":"震荡",score,close:last,ema20:e20,ema50:e50,momentumPct:mom,closeTime:Number(closed.at(-1)[6])};
+  const recent=closed.slice(-21,-1),support=Math.min(...recent.map(k=>Number(k[3]))),resistance=Math.max(...recent.map(k=>Number(k[2])));
+  const ranges=closed.slice(-15).map((k,i)=>{const prev=closed[closed.length-15+i-1],h=Number(k[2]),l=Number(k[3]),pc=prev?Number(prev[4]):Number(k[4]);return Math.max(h-l,Math.abs(h-pc),Math.abs(l-pc))});
+  const atr=ranges.reduce((a,b)=>a+b,0)/ranges.length;
+  return {direction:score>=2?"偏多":score<=-2?"偏空":"震荡",score,close:last,ema20:e20,ema50:e50,momentumPct:mom,closeTime:Number(closed.at(-1)[6]),support,resistance,atr};
  };
  try{
   for(let n=0;n<list.length;n++){
@@ -341,7 +344,12 @@ document.getElementById("scanWatch").addEventListener("click",async()=>{
     const total=multi+flowScore;
     let advice=total>=7&&t[3].score>0&&t[2].score>0?"偏多观察":total<=-7&&t[3].score<0&&t[2].score<0?"偏空观察":"暂不参与";
     const missing=[];if(oiChange===null)missing.push("OI");if(takerRatio===null)missing.push("主动买卖比");if(!globalValid)missing.push("全体多空比");if(!Number.isFinite(funding))missing.push("资金费率");
-    results.push({symbol,price:Number(premium.markPrice)||t[0].close,intervals:Object.fromEntries(intervals.map((p,i)=>[p,t[i]])),oiChangePct:oiChange,takerBuySellRatio:takerRatio,globalLongShortRatio:lsRatio,fundingRatePct:funding,score:total,advice,missing,readAt:new Date().toISOString()});
+    const five=t[0],isLong=advice==="偏多观察",isShort=advice==="偏空观察";
+    const trigger=isLong?five.resistance+five.atr*0.1:isShort?five.support-five.atr*0.1:null;
+    const invalid=isLong?five.support-five.atr*0.5:isShort?five.resistance+five.atr*0.5:null;
+    const risk=trigger!==null?Math.abs(trigger-invalid):null;
+    const target1=risk!==null?(isLong?trigger+risk:trigger-risk):null,target2=risk!==null?(isLong?trigger+2*risk:trigger-2*risk):null;
+    results.push({symbol,price:Number(premium.markPrice)||five.close,intervals:Object.fromEntries(intervals.map((p,i)=>[p,t[i]])),oiChangePct:oiChange,takerBuySellRatio:takerRatio,globalLongShortRatio:lsRatio,fundingRatePct:funding,score:total,advice,missing,riskLevels:{support:five.support,resistance:five.resistance,atr:five.atr,trigger,invalidation:invalid,riskPerUnit:risk,target1,target2,method:"5m前20根完整K线高低点；ATR14简化均值；突破/跌破缓冲0.1ATR，失效价缓冲0.5ATR；目标按1R/2R"},readAt:new Date().toISOString()});
    }catch(e){errors.push({symbol,error:e.message})}
   }
   
@@ -357,11 +365,11 @@ document.getElementById("scanWatch").addEventListener("click",async()=>{
   const tickerMap=new Map(allTickers.map(x=>[x.symbol,x]));
   results.sort((a,b)=>b.score-a.score);
   for(const x of results){
-   const tr=document.createElement("tr"),tk=tickerMap.get(x.symbol),vals=[x.symbol,fmt(x.price),tk?Number(tk.priceChangePercent).toFixed(2)+"%":"—",x.intervals["4h"].direction,x.intervals["1h"].direction,x.intervals["15m"].direction,x.intervals["5m"].direction,x.oiChangePct===null?"缺失":x.oiChangePct.toFixed(2)+"%",x.takerBuySellRatio===null?"缺失":x.takerBuySellRatio.toFixed(3),x.globalLongShortRatio===null?"缺失":x.globalLongShortRatio.toFixed(3),Number.isFinite(x.fundingRatePct)?x.fundingRatePct.toFixed(5)+"%":"缺失",x.advice+"（"+(x.missing.length?"缺"+x.missing.join("/"):"数据齐")+"）",String(x.score)];
+   const tr=document.createElement("tr"),tk=tickerMap.get(x.symbol),vals=[x.symbol,fmt(x.price),tk?Number(tk.priceChangePercent).toFixed(2)+"%":"—",x.intervals["4h"].direction,x.intervals["1h"].direction,x.intervals["15m"].direction,x.intervals["5m"].direction,x.oiChangePct===null?"缺失":x.oiChangePct.toFixed(2)+"%",x.takerBuySellRatio===null?"缺失":x.takerBuySellRatio.toFixed(3),x.globalLongShortRatio===null?"缺失":x.globalLongShortRatio.toFixed(3),Number.isFinite(x.fundingRatePct)?x.fundingRatePct.toFixed(5)+"%":"缺失",x.advice+"（"+(x.missing.length?"缺"+x.missing.join("/"):"数据齐")+"）",String(x.score),fmt(x.riskLevels.support),fmt(x.riskLevels.resistance),x.riskLevels.trigger===null?"暂不设":fmt(x.riskLevels.trigger),x.riskLevels.invalidation===null?"暂不设":fmt(x.riskLevels.invalidation),x.riskLevels.target1===null?"—":fmt(x.riskLevels.target1),x.riskLevels.target2===null?"—":fmt(x.riskLevels.target2)];
    vals.forEach((v,i)=>{const td=document.createElement("td");td.textContent=v;if(i===0){td.style.fontWeight="700";td.style.cursor="pointer";td.addEventListener("click",()=>{document.getElementById("symbol").value=x.symbol;document.getElementById("analyzeAll").click()})}if(i===11)td.className=x.advice==="偏多观察"?"positive":x.advice==="偏空观察"?"negative":"";tr.appendChild(td)});body.appendChild(tr);
   }
-  if(!results.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=13;td.textContent="没有成功读取的合约";tr.appendChild(td);body.appendChild(tr)}
-  raw.textContent=JSON.stringify({readAt:new Date().toISOString(),source:"Binance USD-M public market data",scanned:results.length,failed:errors.length,results,errors,method:"四周期已收盘K线评分合计 + 5m OI/taker/funding辅助分；多空账户比仅展示，不直接作为方向分"},null,2);
+  if(!results.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=19;td.textContent="没有成功读取的合约";tr.appendChild(td);body.appendChild(tr)}
+  raw.textContent=JSON.stringify({readAt:new Date().toISOString(),source:"Binance USD-M public market data",scanned:results.length,failed:errors.length,results,errors,method:"四周期已收盘K线评分合计 + 5m OI/taker/funding辅助分；多空账户比仅展示，不直接作为方向分。风险位为基于5m近20根区间与简化ATR的技术参考，不是交易所挂单价或保证有效的止损。"},null,2);
   status.textContent="扫描完成："+results.length+" 个成功，"+errors.length+" 个失败；读取时间 "+new Date().toLocaleString()+"。建议仅作观察，不代表预测保证。";
  }catch(e){status.textContent="扫描失败："+e.message}
  finally{btn.disabled=false}
