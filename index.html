@@ -34,9 +34,9 @@
 </div>
 <div class="card" id="risingCard">
  <h2>一键预测上涨合约</h2>
- <p class="muted">在原有K线评分上增加5分钟OI持仓价值变化、主动买卖比和最新资金费率。A级需K线偏多且三项资金条件同时确认；B级为结构偏多但资金确认不完整；观察级证据较弱。资金数据缺失不按0处理，结果仅供研究，不是上涨保证。</p>
+ <p class="muted">在原有K线评分上增加5分钟OI持仓数量变化、主动买卖比和最新资金费率。A级需K线偏多且三项资金条件同时确认；B级为结构偏多但资金确认不完整；观察级证据较弱。资金数据缺失不按0处理，结果仅供研究，不是上涨保证。</p>
  <div class="toolbar"><button class="primary" id="scanRising">一键预测上涨合约</button><span id="risingStatus" class="muted">尚未预测</span></div>
- <div class="tablewrap"><table><thead><tr><th>交易对</th><th>价格</th><th>24h涨跌</th><th>4h趋势</th><th>5m动量</th><th>K线评分</th><th>OI价值变化</th><th>主动买卖比</th><th>资金费率</th><th>等级</th><th>判断</th></tr></thead><tbody id="risingRows"><tr><td colspan="11">等待预测</td></tr></tbody></table></div>
+ <div class="tablewrap"><table><thead><tr><th>交易对</th><th>价格</th><th>24h涨跌</th><th>4h趋势</th><th>5m动量</th><th>K线评分</th><th>OI数量变化</th><th>主动买卖比</th><th>资金费率</th><th>等级</th><th>判断</th></tr></thead><tbody id="risingRows"><tr><td colspan="11">等待预测</td></tr></tbody></table></div>
 </div>
 <div class="card">
  <h2>USDT 永续合约列表</h2>
@@ -307,8 +307,8 @@ async function scanCandidates(kind){
     const latentScore=(trend4?1:0)+(compression?2:0)+(risingLows?1:0)+(position<0.65?1:0)+(Math.abs(mom5)<0.5?1:0)+(vr<1.2?1:0);
     let riseScore=0;if(trend4)riseScore+=2;if(Number(last5[4])>e20_5)riseScore++;if(mom5>0.15)riseScore+=2;if(vr>=1.2&&Number(last5[4])>Number(last5[1]))riseScore+=2;if(Number(item.priceChangePercent)>-5&&Number(item.priceChangePercent)<12)riseScore++;if(position>0.75&&Number(last5[4])>rangeHigh)riseScore++;
     let oiChangePct=null,takerRatio=null,fundingRate=null;
-    if(Array.isArray(oiHist)&&oiHist.length>=2){const a=Number(oiHist[oiHist.length-2].sumOpenInterestValue),b=Number(oiHist[oiHist.length-1].sumOpenInterestValue);if(a>0&&Number.isFinite(b))oiChangePct=(b/a-1)*100;}
-    if(Array.isArray(takerHist)&&takerHist.length){const n=Number(takerHist[takerHist.length-1].buySellRatio);if(Number.isFinite(n))takerRatio=n;}
+    if(Array.isArray(oiHist)){const oiClosed=oiHist.filter(v=>Number(v.timestamp)<=Number(last5[6]));if(oiClosed.length>=2){const a=Number(oiClosed[oiClosed.length-2].sumOpenInterest),b=Number(oiClosed[oiClosed.length-1].sumOpenInterest);if(a>0&&Number.isFinite(b))oiChangePct=(b/a-1)*100;}}
+    if(Array.isArray(takerHist)){const takerClosed=takerHist.filter(v=>Number(v.timestamp)<=Number(last5[6]));if(takerClosed.length){const n=Number(takerClosed[takerClosed.length-1].buySellRatio);if(Number.isFinite(n))takerRatio=n;}}
     if(premium&&!premium.error){const n=Number(premium.lastFundingRate);if(Number.isFinite(n))fundingRate=n;}
     const oiPositive=oiChangePct!==null&&oiChangePct>0.1;
     const takerPositive=takerRatio!==null&&takerRatio>1.05;
