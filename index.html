@@ -26,6 +26,18 @@
  <p class="muted" id="updated">数据时间：—</p>
  <p class="muted">列表范围：交易状态为 TRADING、合约类型为 PERPETUAL、计价资产为 USDT。成交额按 24 小时 quoteVolume 排序。</p>
 </div>
+<div class="card" id="scannerCard">
+ <h2>全市场潜伏币扫描</h2>
+ <p class="muted">默认筛选：价格不高于 0.50 USDT、24小时成交额不低于 500万美元；先按成交额预筛，再分析4小时结构与5分钟压缩。扫描范围受接口频率保护，最多深度分析前60个候选，不代表全市场每个合约都已完成深度核验。</p>
+ <div class="toolbar"><button class="primary" id="scanLatent">开始扫描潜伏币</button><span id="latentStatus" class="muted">尚未扫描</span></div>
+ <div class="tablewrap"><table><thead><tr><th>交易对</th><th>价格</th><th>24h成交额</th><th>4h趋势</th><th>5m结构</th><th>潜伏评分</th><th>标签</th></tr></thead><tbody id="latentRows"><tr><td colspan="7">等待扫描</td></tr></tbody></table></div>
+</div>
+<div class="card" id="risingCard">
+ <h2>一键预测上涨合约</h2>
+ <p class="muted">对预筛候选检查4小时趋势、5分钟动量、EMA位置、成交额放大与主动买入量。按规则评分排序，只列出数据完整且偏多条件较多的合约；这是模型筛选结果，不是上涨保证。</p>
+ <div class="toolbar"><button class="primary" id="scanRising">一键预测上涨合约</button><span id="risingStatus" class="muted">尚未预测</span></div>
+ <div class="tablewrap"><table><thead><tr><th>交易对</th><th>价格</th><th>24h涨跌</th><th>4h趋势</th><th>5m动量</th><th>成交量比</th><th>评分</th><th>判断</th></tr></thead><tbody id="risingRows"><tr><td colspan="8">等待预测</td></tr></tbody></table></div>
+</div>
 <div class="card">
  <h2>USDT 永续合约列表</h2>
  <div class="controls"><input id="search" placeholder="搜索交易对，例如 BTC、DOGS"><span class="pill" id="count">0 个合约</span></div>
@@ -247,6 +259,74 @@ document.getElementById("validateForecasts").addEventListener("click",async()=>{
   saveForecasts(a);renderForecasts();status.textContent="本次核验 "+checked+" 条。"+(errors.length?"未能核验："+errors.join("；"):"");
  }finally{btn.disabled=false}
 });
+
+
+async function getScanUniverse(){
+ if(!allTickers.length||!symbols.size){
+  loadStatus.textContent="扫描前先加载全部合约…";
+  const info=await getJSON(API+"/fapi/v1/exchangeInfo"),tickers=await getJSON(API+"/fapi/v1/ticker/24hr");
+  exchangeInfo=info;symbols=new Set(info.symbols.filter(s=>s.status==="TRADING"&&s.contractType==="PERPETUAL"&&s.quoteAsset==="USDT").map(s=>s.symbol));
+  allTickers=tickers.filter(t=>symbols.has(t.symbol)).sort((a,b)=>Number(b.quoteVolume)-Number(a.quoteVolume));render();
+ }
+ // 保留低价偏好和流动性底线，最多60个深度扫描，避免522合约同时打接口。
+ return allTickers.filter(t=>Number(t.lastPrice)<=0.5&&Number(t.quoteVolume)>=5000000).slice(0,60);
+}
+async function poolMap(items,limit,fn){
+ let next=0;const workers=Array.from({length,},()=>{}); 
+}
+async function scanCandidates(kind){
+ const status=document.getElementById(kind==="latent"?"latentStatus":"risingStatus"),body=document.getElementById(kind==="latent"?"latentRows":"risingRows"),btn=document.getElementById(kind==="latent"?"scanLatent":"scanRising");
+ btn.disabled=true;body.replaceChildren();status.textContent="正在读取市场候选…";
+ try{
+  const universe=await getScanUniverse();
+  if(!universe.length)throw new Error("没有符合价格≤0.50 USDT且24小时成交额≥500万美元的合约。");
+  status.textContent="预筛得到 "+universe.length+" 个候选，正在限速分析5m和4h K线…";
+  const results=[];let cursor=0,finished=0;
+  const worker=async()=>{while(cursor<universe.length){const item=universe[cursor++];try{
+    const [b5,b4]=await Promise.all([
+     getJSON(API+"/fapi/v1/klines?symbol="+encodeURIComponent(item.symbol)+"&interval=5m&limit=60"),
+     getJSON(API+"/fapi/v1/klines?symbol="+encodeURIComponent(item.symbol)+"&interval=4h&limit=60")
+    ]);
+    const now=Date.now(),c5=b5.filter(k=>Number(k[6])<now),c4=b4.filter(k=>Number(k[6])<now);
+    if(c5.length<25||c4.length<50)throw new Error("完整K线不足");
+    const cl5=c5.map(k=>Number(k[4])),cl4=c4.map(k=>Number(k[4]));
+    const last5=c5[c5.length-1],last4=c4[c4.length-1],p5=c5[c5.length-2];
+    const e20_4=ema(cl4,20),e50_4=ema(cl4,50),e20_5=ema(cl5,20);
+    const mom5=(Number(last5[4])/Number(c5[c5.length-4][4])-1)*100;
+    const qv5=c5.map(k=>Number(k[7])),avgq=qv5.slice(-21,-1).reduce((s,x)=>s+x,0)/20,vr=avgq?qv5[qv5.length-1]/avgq:NaN;
+    const ranges=c5.slice(-20).map(k=>(Number(k[2])-Number(k[3]))/Number(k[4])*100);
+    const avgRange=ranges.reduce((s,x)=>s+x,0)/ranges.length;
+    const prior=c5.slice(-20,-1),rangeHigh=Math.max(...prior.map(k=>Number(k[2]))),rangeLow=Math.min(...prior.map(k=>Number(k[3])));
+    const position=(Number(last5[4])-rangeLow)/(rangeHigh-rangeLow||1);
+    const lows=c5.slice(-6).map(k=>Number(k[3])),risingLows=lows.slice(3).every((v,i)=>v>=lows[i+2]);
+    const trend4=e20_4>e50_4&&Number(last4[4])>e20_4;
+    const compression=avgRange<1.8;
+    const latentScore=(trend4?1:0)+(compression?2:0)+(risingLows?1:0)+(position<0.65?1:0)+(Math.abs(mom5)<0.5?1:0)+(vr<1.2?1:0);
+    let riseScore=0;if(trend4)riseScore+=2;if(Number(last5[4])>e20_5)riseScore++;if(mom5>0.15)riseScore+=2;if(vr>=1.2&&Number(last5[4])>Number(last5[1]))riseScore+=2;if(Number(item.priceChangePercent)>-5&&Number(item.priceChangePercent)<12)riseScore++;if(position>0.75&&Number(last5[4])>rangeHigh)riseScore++;
+    results.push({symbol:item.symbol,price:Number(item.lastPrice),qv:Number(item.quoteVolume),change24:Number(item.priceChangePercent),trend4:trend4?"4h偏多":"4h未转强",compression,risingLows,position,mom5,vr,latentScore,riseScore,close5:Number(last5[4]),rangeHigh,rangeLow,avgRange});
+   }catch(e){results.push({symbol:item.symbol,error:e.message})}
+   finished++;status.textContent="已分析 "+finished+"/"+universe.length+"；有效 "+results.filter(x=>!x.error).length+" 个…";
+  }};
+  await Promise.all(Array.from({length:4},()=>worker()));
+  const valid=results.filter(x=>!x.error);
+  const fmtN=n=>Number(n).toLocaleString("en-US",{maximumFractionDigits:8});
+  if(kind==="latent"){
+   const chosen=valid.filter(x=>x.latentScore>=4&&x.compression).sort((a,b)=>b.latentScore-a.latentScore||a.qv-b.qv);
+   if(!chosen.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=7;td.textContent="本轮没有达到潜伏条件的标的；不降低条件凑数。";tr.appendChild(td);body.appendChild(tr)}
+   chosen.slice(0,30).forEach(x=>{const tr=document.createElement("tr");[x.symbol,fmtN(x.price),fmtN(x.qv),x.trend4,x.compression?"波动收敛":"未收敛",x.latentScore+"/7",x.risingLows?"低点抬高":"观察中"].forEach(v=>{const td=document.createElement("td");td.textContent=v;tr.appendChild(td)});body.appendChild(tr)});
+   status.textContent="完成：预筛 "+universe.length+" 个，K线有效 "+valid.length+" 个，潜伏候选 "+chosen.length+" 个。数据时间 "+new Date().toLocaleString()+"。";
+  }else{
+   const chosen=valid.filter(x=>x.riseScore>=5&&x.trend4==="4h偏多").sort((a,b)=>b.riseScore-a.riseScore||b.mom5-a.mom5);
+   if(!chosen.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=8;td.textContent="本轮没有达到偏多评分门槛的标的；不输出低质量候选。";tr.appendChild(td);body.appendChild(tr)}
+   chosen.slice(0,30).forEach(x=>{const tr=document.createElement("tr");[x.symbol,fmtN(x.price),(x.change24>=0?"+":"")+x.change24.toFixed(2)+"%",x.trend4,(x.mom5>=0?"+":"")+x.mom5.toFixed(3)+"%",Number.isFinite(x.vr)?x.vr.toFixed(2)+"倍":"—",x.riseScore+"/8","偏多观察，非确定预测"].forEach(v=>{const td=document.createElement("td");td.textContent=v;tr.appendChild(td)});body.appendChild(tr)});
+   status.textContent="完成：预筛 "+universe.length+" 个，K线有效 "+valid.length+" 个，上涨观察候选 "+chosen.length+" 个。数据时间 "+new Date().toLocaleString()+"。";
+  }
+  const failed=results.filter(x=>x.error).length;if(failed)status.textContent+=" 失败/缺失 "+failed+" 个，未将缺失数据视为零。";
+ }catch(e){status.textContent="扫描失败："+e.message}
+ finally{btn.disabled=false}
+}
+document.getElementById("scanLatent").addEventListener("click",()=>scanCandidates("latent"));
+document.getElementById("scanRising").addEventListener("click",()=>scanCandidates("rising"));
 
 document.getElementById("analyzeAll").addEventListener("click",async()=>{
  const btn=document.getElementById("analyzeAll"),status=document.getElementById("allStatus"),summary=document.getElementById("allSummary");
