@@ -53,7 +53,7 @@ const API="https://fapi.binance.com";
 const loadBtn=document.getElementById("load"),loadStatus=document.getElementById("loadStatus"),updated=document.getElementById("updated");
 const rows=document.getElementById("tickerRows"),search=document.getElementById("search"),count=document.getElementById("count");
 let allTickers=[],symbols=new Set(),exchangeInfo=null;
-async function getJSON(url){const r=await fetch(url,{cache:"no-store"});const txt=await r.text();let data;try{data=JSON.parse(txt)}catch{throw new Error("HTTP "+r.status+"：返回内容不是 JSON："+txt.slice(0,180))}if(!r.ok)throw new Error("HTTP "+r.status+"："+JSON.stringify(data));return data}
+async function getJSON(url){const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),15000);try{const r=await fetch(url,{cache:"no-store",signal:controller.signal});const txt=await r.text();let data;try{data=JSON.parse(txt)}catch{throw new Error("HTTP "+r.status+"：返回内容不是 JSON："+txt.slice(0,180))}if(!r.ok)throw new Error("HTTP "+r.status+"："+JSON.stringify(data));return data}catch(e){if(e.name==="AbortError")throw new Error("请求超时（15秒），请稍后重试；可能是 Binance 接口或网络暂时无响应");throw e}finally{clearTimeout(timer)}}
 function fmt(n){const x=Number(n);if(!Number.isFinite(x))return "—";return x.toLocaleString("en-US",{maximumFractionDigits:8})}
 function render(){
  const q=search.value.trim().toUpperCase();
@@ -71,16 +71,16 @@ function render(){
  rows.appendChild(frag);
 }
 loadBtn.addEventListener("click",async()=>{
- loadBtn.disabled=true;loadStatus.className="status";loadStatus.textContent="正在读取官方接口…";
+ loadBtn.disabled=true;loadStatus.className="status";loadStatus.textContent="正在连接 Binance 官方接口（最多等待 15 秒）…";
  try{
-  const [info,tickers]=await Promise.all([getJSON(API+"/fapi/v1/exchangeInfo"),getJSON(API+"/fapi/v1/ticker/24hr")]);
+  loadStatus.textContent="正在读取合约清单…";const info=await getJSON(API+"/fapi/v1/exchangeInfo");loadStatus.textContent="合约清单已返回，正在读取 24 小时行情…";const tickers=await getJSON(API+"/fapi/v1/ticker/24hr");
   exchangeInfo=info;
   symbols=new Set(info.symbols.filter(s=>s.status==="TRADING"&&s.contractType==="PERPETUAL"&&s.quoteAsset==="USDT").map(s=>s.symbol));
   allTickers=tickers.filter(t=>symbols.has(t.symbol)).sort((a,b)=>Number(b.quoteVolume)-Number(a.quoteVolume));
   render();document.getElementById("exchangeData").textContent=JSON.stringify({timezone:info.timezone,serverTime:info.serverTime,totalUSDTPerpetuals:symbols.size,example:info.symbols.find(s=>s.symbol==="BTCUSDT")},null,2);
   loadStatus.className="status ok";loadStatus.textContent="加载成功："+symbols.size+" 个可交易 USDT 永续合约";
   updated.textContent="数据读取时间："+new Date().toLocaleString()+"（本地时间）";
- }catch(e){loadStatus.className="status bad";loadStatus.textContent="加载失败："+e.message}
+ }catch(e){loadStatus.className="status bad";loadStatus.textContent="加载失败："+e.message+"。请检查网络后再点刷新。"}
  finally{loadBtn.disabled=false}
 });
 search.addEventListener("input",render);
