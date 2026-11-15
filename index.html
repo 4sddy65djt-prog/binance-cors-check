@@ -82,5 +82,44 @@ document.getElementById("getKlines").addEventListener("click",async()=>{
  catch(e){status.textContent="读取失败："+e.message;out.textContent=String(e)}
  finally{btn.disabled=false}
 });
-</script>
+
+document.getElementById("getFlow").addEventListener("click",async()=>{
+ const symbol=document.getElementById("symbol").value.trim().toUpperCase();
+ const period=document.getElementById("flowPeriod").value;
+ const status=document.getElementById("flowStatus"),body=document.getElementById("flowRows"),raw=document.getElementById("flowRaw"),btn=document.getElementById("getFlow");
+ if(!/^[A-Z0-9]+$/.test(symbol)){status.textContent="交易对格式不正确";return}
+ btn.disabled=true;status.textContent="正在分别请求 OI、资金费率和主动买卖量…";body.replaceChildren();raw.textContent="";
+ const endpoints={
+  openInterest:API+"/fapi/v1/openInterest?symbol="+encodeURIComponent(symbol),
+  openInterestHistory:API+"/futures/data/openInterestHist?symbol="+encodeURIComponent(symbol)+"&period="+period+"&limit=6",
+  markFunding:API+"/fapi/v1/premiumIndex?symbol="+encodeURIComponent(symbol),
+  taker:API+"/futures/data/takerlongshortRatio?symbol="+encodeURIComponent(symbol)+"&period="+period+"&limit=6"
+ };
+ const names={openInterest:"当前 OI",openInterestHistory:"OI 历史（最近 6 个周期）",markFunding:"标记价格 / 最新资金费率",taker:"主动买卖量（最近 6 个周期）"};
+ const result={};const errors={};
+ await Promise.all(Object.entries(endpoints).map(async([key,url])=>{try{result[key]=await getJSON(url)}catch(e){errors[key]=e.message}}));
+ const add=(label,value,note)=>{const tr=document.createElement("tr");[label,value,note].forEach((v,i)=>{const td=document.createElement("td");td.textContent=v;tr.appendChild(td)});body.appendChild(tr)};
+ if(result.openInterest){add("当前未平仓量 OI",fmt(result.openInterest.openInterest), "合约数量；时点 "+new Date(result.openInterest.time).toLocaleString())}
+ if(result.openInterestHistory&&result.openInterestHistory.length){
+  const a=result.openInterestHistory,first=Number(a[0].sumOpenInterestValue),last=Number(a[a.length-1].sumOpenInterestValue),change=first?((last-first)/first*100):NaN;
+  add("OI 名义价值（最近 "+a.length+" 个周期）",fmt(last)+" USDT","区间变化 "+(Number.isFinite(change)?change.toFixed(2)+"%":"无法计算")+"；首尾数据时间 "+new Date(a[0].timestamp).toLocaleString()+" 至 "+new Date(a[a.length-1].timestamp).toLocaleString());
+ }else if(errors.openInterestHistory)add("OI 历史","不可用",errors.openInterestHistory);
+ if(result.markFunding){
+  const m=result.markFunding,fr=Number(m.lastFundingRate)*100;
+  add("标记价格",fmt(m.markPrice),"指数价格 "+fmt(m.indexPrice));
+  add("最新资金费率",Number.isFinite(fr)?fr.toFixed(5)+"%":"—","下次结算 "+(m.nextFundingTime?new Date(m.nextFundingTime).toLocaleString():"—"));
+ }
+ if(result.taker&&result.taker.length){
+  const a=result.taker,last=a[a.length-1],ratio=Number(last.buySellRatio);
+  add("主动买卖量比（买/卖）",Number.isFinite(ratio)?ratio.toFixed(4):"—","周期 "+period+"；该周期起始 "+new Date(last.timestamp).toLocaleString());
+  add("主动买入量 / 主动卖出量",fmt(last.buyVol)+" / "+fmt(last.sellVol),"单位为合约基础资产数量");
+ }else if(errors.taker)add("主动买卖量","不可用",errors.taker);
+ for(const [key,msg] of Object.entries(errors))console.warn(key,msg);
+ raw.textContent=JSON.stringify({symbol,period,readAt:new Date().toISOString(),data:result,errors},null,2);
+ const success=Object.keys(result).length;
+ status.textContent="读取完成："+success+"/4 组接口成功。失败项会单独列出；本结果不推断净多空。";
+ status.className="muted "+(success===4?"ok":success===0?"bad":"");
+ btn.disabled=false;
+});
+\n</script>
 </main></body></html>
