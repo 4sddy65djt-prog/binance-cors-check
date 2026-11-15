@@ -286,7 +286,7 @@ function notifyWatchChanges(changes){
 }
 const WATCH_KEY="binance_watchlist_v1";
 function readWatch(){try{const a=JSON.parse(localStorage.getItem(WATCH_KEY)||"[]");return Array.isArray(a)?[...new Set(a.filter(x=>typeof x==="string"&&/^[A-Z0-9]+$/.test(x)))]:[]}catch{return []}}
-function saveWatch(a){localStorage.setItem(WATCH_KEY,JSON.stringify([...new Set(a)].slice(0,50)));renderWatch()}
+function saveWatch(a){try{localStorage.setItem(WATCH_KEY,JSON.stringify([...new Set(a)].slice(0,50)));renderWatch();return true}catch(e){throw new Error("Safari本地保存失败："+(e&&e.message?e.message:"存储不可用")+"。请检查Safari是否允许网站存储数据。")}}
 function renderWatch(){
  const a=readWatch(),box=document.getElementById("watchItems");box.replaceChildren();
  if(!a.length){box.textContent="关注列表为空";return}
@@ -299,8 +299,12 @@ function watchAdd(sym){
  const a=readWatch();if(a.includes(sym))return "该合约已在关注列表";if(a.length>=50)throw new Error("最多保存50个关注合约");
  saveWatch([...a,sym]);return "已添加 "+sym;
 }
-document.getElementById("addWatch").addEventListener("click",()=>{const st=document.getElementById("watchStatus");try{st.textContent=watchAdd(document.getElementById("watchInput").value)}catch(e){st.textContent=e.message}});
-document.getElementById("addCurrentWatch").addEventListener("click",()=>{const st=document.getElementById("watchStatus");try{st.textContent=watchAdd(document.getElementById("symbol").value)}catch(e){st.textContent=e.message}});
+function handleAddWatch(){const st=document.getElementById("watchStatus"),input=document.getElementById("watchInput");try{const msg=watchAdd(input.value);st.textContent=msg;if(msg.startsWith("已添加"))input.value="";}catch(e){st.textContent="添加失败："+(e&&e.message?e.message:String(e));}}
+document.getElementById("addWatch").type="button";
+document.getElementById("addWatch").onclick=handleAddWatch;
+document.getElementById("addWatch").addEventListener("click",handleAddWatch);
+document.getElementById("addCurrentWatch").type="button";
+document.getElementById("addCurrentWatch").onclick=()=>{const st=document.getElementById("watchStatus");try{st.textContent=watchAdd(document.getElementById("symbol").value)}catch(e){st.textContent="添加失败："+(e&&e.message?e.message:String(e))}};
 document.getElementById("watchInput").addEventListener("keydown",e=>{if(e.key==="Enter")document.getElementById("addWatch").click()});
 renderWatch();
 document.getElementById("scanWatch").addEventListener("click",async()=>{
