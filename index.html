@@ -304,12 +304,11 @@ document.getElementById("addCurrentWatch").addEventListener("click",()=>{const s
 document.getElementById("watchInput").addEventListener("keydown",e=>{if(e.key==="Enter")document.getElementById("addWatch").click()});
 renderWatch();
 document.getElementById("scanWatch").addEventListener("click",async()=>{
- if(watchScanBusy)return;watchScanBusy=true;
- const previous=new Map(readWatchHistory().filter(x=>x.latest).map(x=>[x.symbol,x.advice]));
+ if(watchScanBusy)return;
 
  const btn=document.getElementById("scanWatch"),status=document.getElementById("watchStatus"),body=document.getElementById("watchRows"),raw=document.getElementById("watchRaw");
  const list=readWatch();if(!list.length){status.textContent="请先添加关注合约";return}
- btn.disabled=true;body.replaceChildren();raw.textContent="";const results=[],errors=[];
+ watchScanBusy=true;btn.disabled=true;body.replaceChildren();raw.textContent="";const results=[],errors=[];
  const intervals=["5m","15m","1h","4h"];
  const trend=(bars)=>{
   const now=Date.now(),closed=bars.filter(k=>Number(k[6])<now);
@@ -376,8 +375,8 @@ document.getElementById("watchNotify").addEventListener("click",async()=>{
 });
 document.getElementById("watchAuto").addEventListener("click",()=>{
  const st=document.getElementById("watchAutoStatus"),btn=document.getElementById("watchAuto"),mins=Number(document.getElementById("watchInterval").value);
- if(watchTimer){clearInterval(watchTimer);watchTimer=null}
- if(!mins){btn.textContent="启动自动复扫";st.textContent="自动复扫已关闭";return}
+ if(watchTimer){clearInterval(watchTimer);watchTimer=null;btn.textContent="启动自动复扫";st.textContent="自动复扫已关闭";return}
+ if(!mins){btn.textContent="启动自动复扫";st.textContent="请选择复扫间隔";return}
  watchTimer=setInterval(()=>{if(!document.hidden&&!watchScanBusy)document.getElementById("scanWatch").click()},mins*60*1000);
  btn.textContent="停止自动复扫";st.textContent="自动复扫已启动：每"+mins+"分钟；网页需保持打开且处于前台。";
 });
